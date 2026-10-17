@@ -1,0 +1,13 @@
+export { IDELayout } from './IDELayout';
+export { CollaborativeEditor } from './CollaborativeEditor';
+export { TitleBar } from './TitleBar';
+export { ActivityBar } from './ActivityBar';
+export { FileTree } from './FileTree';
+export { EditorTabs } from './EditorTabs';
+export { MonacoEditor } from './MonacoEditor';
+export { ChatPanel } from './ChatPanel';
+export { AIAssistant } from './AIAssistant';
+export { TerminalPanel } from './TerminalPanel';
+export { StatusBar } from './StatusBar';
+export { SettingsPanel } from './SettingsPanel';
+export { LocalProjectEditor } from './LocalProjectEditor';
