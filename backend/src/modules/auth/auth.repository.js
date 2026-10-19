@@ -14,6 +14,8 @@ const SAFE_USER_SELECT = {
   updatedAt: true,
 };
 
+
+
 async function createUser(data) {
   return prisma.user.create({
     data: {
@@ -24,6 +26,9 @@ async function createUser(data) {
     select: SAFE_USER_SELECT,
   });
 }
+
+
+
 
 /** Returns user WITH password hash — for credential verification only. */
 async function findByEmail(email) {
@@ -39,3 +44,7 @@ async function findById(id) {
 }
 
 module.exports = { createUser, findByEmail, findById };
+
+
+
+

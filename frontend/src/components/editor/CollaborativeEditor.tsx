@@ -297,7 +297,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
       return;
     }
 
-    sendCodeChange(content);
+    sendCodeChange();
   };
 
   const handleToggleLock = async () => {
@@ -668,6 +668,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
                       {activeBottomPanel === 'terminal' && (
                         <TerminalPanel
                           className="h-full"
+                          projectId={projectId}
                           codeToRun={currentCode}
                           language={currentLanguage}
                           filePath={activeTab?.path}

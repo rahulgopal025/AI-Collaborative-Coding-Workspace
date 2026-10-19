@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -26,6 +26,8 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
+import { FileIconComponent } from './FileIconComponent';
+
 
 type FileLanguageOption = {
   key: string;
@@ -66,54 +68,10 @@ const FileIcon: React.FC<{ name: string; type: 'file' | 'folder'; isOpen?: boole
   type,
   isOpen,
   useMaterialIcons,
-}) => {
-  if (useMaterialIcons) {
-    if (type === 'folder') return <span className="text-sm leading-none mr-2">{isOpen ? '📂' : '📁'}</span>;
-    const ext = name.split('.').pop()?.toLowerCase() || '';
-    switch (ext) {
-      case 'ts': case 'tsx': return <span className="text-sm leading-none mr-2">📘</span>;
-      case 'js': case 'jsx': return <span className="text-sm leading-none mr-2">🟨</span>;
-      case 'py': return <span className="text-sm leading-none mr-2">🐍</span>;
-      case 'json': return <span className="text-sm leading-none mr-2">⚙️</span>;
-      case 'md': return <span className="text-sm leading-none mr-2">📝</span>;
-      case 'css': case 'scss': return <span className="text-sm leading-none mr-2">🎨</span>;
-      case 'html': return <span className="text-sm leading-none mr-2">🌐</span>;
-      case 'png': case 'jpg': case 'svg': return <span className="text-sm leading-none mr-2">🖼️</span>;
-      case 'env': return <span className="text-sm leading-none mr-2">🔒</span>;
-      default: return <span className="text-sm leading-none mr-2">📄</span>;
-    }
-  }
+}) => (
+  <FileIconComponent name={name} type={type} isOpen={isOpen} useMaterialIcons={useMaterialIcons} />
+);
 
-  if (type === 'folder') {
-    return isOpen ? (
-      <FolderOpen className="h-4 w-4 mr-1 text-[#dcb67a]" />
-    ) : (
-      <Folder className="h-4 w-4 mr-1 text-[#dcb67a]" />
-    );
-  }
-
-  const ext = name.split('.').pop()?.toLowerCase() || '';
-
-  switch (ext) {
-    case 'ts':
-    case 'tsx':
-      return <FileCode className="h-4 w-4 mr-1 text-[#519aba]" />;
-    case 'js':
-    case 'jsx':
-      return <FileCode className="h-4 w-4 mr-1 text-[#cbcb41]" />;
-    case 'py':
-      return <FileCode className="h-4 w-4 mr-1 text-[#3572a5]" />;
-    case 'json':
-      return <FileJson className="h-4 w-4 mr-1 text-[#cbcb41]" />;
-    case 'md':
-      return <FileText className="h-4 w-4 mr-1 text-[#7fb7ff]" />;
-    case 'css':
-    case 'scss':
-      return <FileType className="h-4 w-4 mr-1 text-[#7fb7ff]" />;
-    default:
-      return <File className="h-4 w-4 mr-1 text-[#c5c5c5]" />;
-  }
-};
 
 const getParentLocationLabel = (path: string) => {
   const lastSlashIndex = path.lastIndexOf('/');
@@ -221,10 +179,9 @@ const FileTreeItem: React.FC<FileTreeItemProps> = ({
               </span>
             )}
             {!isFolder && <span className="w-5" />}
-            {!useMaterialIcons && <FileIcon name={node.name} type={node.type} isOpen={node.isOpen} />}
-            {useMaterialIcons && <FileIcon name={node.name} type={node.type} isOpen={node.isOpen} useMaterialIcons={true} />}
+            <FileIcon name={node.name} type={node.type} isOpen={node.isOpen} />
             <span className="flex-1 truncate">{node.name}</span>
-            {!readOnly && (
+            {!readOnly && !node.isVirtual && (
               <div className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                 {isFolder && (
                   <>
@@ -280,7 +237,7 @@ const FileTreeItem: React.FC<FileTreeItemProps> = ({
             )}
           </div>
         </ContextMenuTrigger>
-        {!readOnly && (
+        {!readOnly && !node.isVirtual && (
           <ContextMenuContent className="w-48">
             {isFolder && (
               <>
@@ -371,6 +328,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
 }) => {
   const {
     files,
+    hasNodeModules,
     activeFileId,
     openFile,
     toggleFolder,
@@ -380,6 +338,21 @@ export const FileTree: React.FC<FileTreeProps> = ({
     renameNode: renameNodeLocal,
     moveNode: moveNodeLocal,
   } = useEditorStore();
+
+  const displayFiles = useMemo(() => {
+    if (!hasNodeModules) return files;
+    const exists = files.some((f) => f.name === 'node_modules');
+    if (exists) return files;
+    const virtualNodeModules: FileNode = {
+      id: '__virtual_node_modules__',
+      name: 'node_modules',
+      type: 'folder',
+      path: '/node_modules',
+      isVirtual: true,
+      children: [],
+    };
+    return [virtualNodeModules, ...files];
+  }, [files, hasNodeModules]);
   const [isHovered, setIsHovered] = useState(false);
   const [dialogMode, setDialogMode] = useState<DialogMode | null>(null);
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
@@ -491,6 +464,10 @@ export const FileTree: React.FC<FileTreeProps> = ({
   };
 
   const handleFolderToggle = (node: FileNode) => {
+    if (node.isVirtual) {
+      toast.info('node_modules dependencies are managed in the container workspace.');
+      return;
+    }
     setFocusedFolderPath(node.path);
     toggleFolder(node.id);
   };
@@ -654,7 +631,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
       </div>
 
       <div className="flex-1 overflow-auto py-1">
-        {files.map((node) => (
+        {displayFiles.map((node) => (
           <FileTreeItem
             key={node.id}
             node={node}

@@ -19,6 +19,7 @@ export interface FileNode {
   createdAt?: string;
   children?: FileNode[];
   isOpen?: boolean;
+  isVirtual?: boolean;
 }
 
 export interface EditorTab {

@@ -427,6 +427,8 @@ interface EditorState {
   setTriggerRun: (timestamp: number) => void;
   isTerminalRunning: boolean;
   setIsTerminalRunning: (isRunning: boolean) => void;
+  hasNodeModules: boolean;
+  setHasNodeModules: (has: boolean) => void;
   getAllFiles: () => FlatFileNode[];
   clearAIMessages: (projectId: string) => void;
 }
@@ -620,6 +622,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   installedExtensions: ['vscode-icons'],
   triggerRun: 0,
   isTerminalRunning: false,
+  hasNodeModules: false,
   htmlPreviewLayout: 'editor',
 
   // Actions
@@ -627,6 +630,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setHtmlPreviewLayout: (layout) => set({ htmlPreviewLayout: layout }),
   setTriggerRun: (timestamp) => set({ triggerRun: timestamp }),
   setIsTerminalRunning: (isRunning) => set({ isTerminalRunning: isRunning }),
+  setHasNodeModules: (has) => set({ hasNodeModules: has }),
   openFile: (fileId: string) => {
     const state = get();
     const file = findFileById(state.files, fileId);

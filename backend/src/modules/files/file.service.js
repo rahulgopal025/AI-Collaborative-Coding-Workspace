@@ -55,6 +55,13 @@ async function updateFile(fileId, data, userId) {
 
   const updated = await fileRepository.updateFile(fileId, data);
 
+  try {
+    const { syncFileToDisk } = require('../projectRunner/fileMaterializer');
+    if (data.content !== undefined) {
+      syncFileToDisk(file.projectId, file.name, data.content);
+    }
+  } catch {}
+
   await activityService.log({
     projectId: file.projectId,
     userId,
@@ -139,3 +146,5 @@ module.exports = {
   updateFolder,
   deleteFolder,
 };
+
+

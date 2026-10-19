@@ -3,6 +3,8 @@ import { X, Circle, ChevronLeft, ChevronRight, Terminal, Code, Columns, Globe } 
 import { useEditorStore } from '@/store/editorStore';
 import { cn } from '@/lib/utils';
 import { RunButton } from './RunButton';
+import { FileIconComponent } from './FileIconComponent';
+
 import { isExecutableLanguage } from '@/lib/sandboxExecutor';
 
 interface EditorTabsProps {
@@ -89,6 +91,7 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({ className }) => {
                   </button>
                 )}
               </div>
+              <FileIconComponent name={tab.name} type="file" className="mr-1.5" />
               <span className="truncate max-w-[150px]">{tab.name}</span>
               {tab.isDirty && (
                 <button
