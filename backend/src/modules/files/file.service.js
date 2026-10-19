@@ -13,6 +13,13 @@ const ERROR_CODES = require('../../common/errors/errorCodes');
 async function createFile(projectId, data, userId) {
   await permissionService.can(userId, projectId, 'FILE_CREATE');
 
+  // Check if file already exists with same name and folder in project
+  const existing = await fileRepository.findFileByNameAndFolder(projectId, data.folderId, data.name);
+  if (existing) {
+    logger.info({ projectId, folderId: data.folderId, name: data.name, fileId: existing.id }, 'File already exists, returning existing file');
+    return existing;
+  }
+
   const file = await fileRepository.createFile({ ...data, projectId });
 
   await activityService.log({
@@ -94,6 +101,12 @@ async function deleteFile(fileId, userId) {
 
 async function createFolder(projectId, data, userId) {
   await permissionService.can(userId, projectId, 'FILE_CREATE');
+
+  // Check if folder already exists with same name and parent in project
+  const existing = await fileRepository.findFolderByNameAndParent(projectId, data.parentId, data.name);
+  if (existing) {
+    return existing;
+  }
 
   const folder = await fileRepository.createFolder({ ...data, projectId });
 

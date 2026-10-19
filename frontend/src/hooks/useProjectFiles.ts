@@ -77,9 +77,21 @@ const toFileLock = (lock: DbFileLock | null): FileLock | null => {
 // Convert flat DB files to nested FileNode tree
 const buildFileTree = (files: DbFile[]): FileNode[] => {
   const nodeMap = new Map<string, FileNode>();
-  const rootNodes: FileNode[] = [];
+  const fileByPath = new Map<string, DbFile>();
 
+  // Deduplicate files by unique path, preferring items with content or newer updates
   files.forEach((file) => {
+    const existing = fileByPath.get(file.path);
+    if (
+      !existing ||
+      (!existing.content && file.content) ||
+      new Date(file.updated_at || file.created_at || 0) > new Date(existing.updated_at || existing.created_at || 0)
+    ) {
+      fileByPath.set(file.path, file);
+    }
+  });
+
+  fileByPath.forEach((file) => {
     nodeMap.set(file.path, {
       id: file.id,
       name: file.name,
@@ -97,7 +109,10 @@ const buildFileTree = (files: DbFile[]): FileNode[] => {
     });
   });
 
-  files.forEach((file) => {
+  const rootNodes: FileNode[] = [];
+  const seenRootIds = new Set<string>();
+
+  fileByPath.forEach((file) => {
     const node = nodeMap.get(file.path);
     if (!node) return;
 
@@ -105,10 +120,15 @@ const buildFileTree = (files: DbFile[]): FileNode[] => {
       const parent = nodeMap.get(file.parent_path);
       if (parent) {
         parent.children = parent.children || [];
-        parent.children.push(node);
+        if (!parent.children.some((c) => c.id === node.id || c.path === node.path)) {
+          parent.children.push(node);
+        }
       }
     } else {
-      rootNodes.push(node);
+      if (!seenRootIds.has(node.id)) {
+        seenRootIds.add(node.id);
+        rootNodes.push(node);
+      }
     }
   });
 
@@ -180,8 +200,11 @@ export const useProjectFiles = (projectId: string | null) => {
     };
     
     // Add all folders
+    const seenFolderPaths = new Set<string>();
     for (const folder of backendData.folders || []) {
       const path = buildFolderPath(folder);
+      if (seenFolderPaths.has(path)) continue;
+      seenFolderPaths.add(path);
       mappedFiles.push({
         id: folder.id,
         project_id: projectId!,
@@ -200,12 +223,13 @@ export const useProjectFiles = (projectId: string | null) => {
       });
     }
     
-    // Add all files
+    // Add all files (deduplicating by path, keeping newest/non-empty)
+    const fileMap = new Map<string, DbFile>();
     for (const file of backendData.files || []) {
       const parentPath = file.folderId ? folderPathMap.get(file.folderId) || null : null;
       const path = parentPath ? `${parentPath}/${file.name}` : `/${file.name}`;
       
-      mappedFiles.push({
+      const candidate: DbFile = {
         id: file.id,
         project_id: projectId!,
         name: file.name,
@@ -220,8 +244,19 @@ export const useProjectFiles = (projectId: string | null) => {
         last_updated: file.updatedAt,
         created_at: file.createdAt,
         updated_at: file.updatedAt,
-      });
+      };
+
+      const existing = fileMap.get(path);
+      if (
+        !existing ||
+        (!existing.content && candidate.content) ||
+        new Date(candidate.updated_at || candidate.created_at || 0) > new Date(existing.updated_at || existing.created_at || 0)
+      ) {
+        fileMap.set(path, candidate);
+      }
     }
+
+    fileMap.forEach((entry) => mappedFiles.push(entry));
     
     return mappedFiles;
   }, [projectId]);
@@ -334,7 +369,7 @@ export const useProjectFiles = (projectId: string | null) => {
         };
 
         setDbFiles((prev) => {
-          const nextFiles = [...prev, newDbFile];
+          const nextFiles = upsertDbFile(prev, newDbFile);
           setFiles(buildFileTree(nextFiles));
           return nextFiles;
         });

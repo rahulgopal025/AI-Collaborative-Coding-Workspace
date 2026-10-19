@@ -340,9 +340,16 @@ export const FileTree: React.FC<FileTreeProps> = ({
   } = useEditorStore();
 
   const displayFiles = useMemo(() => {
-    if (!hasNodeModules) return files;
-    const exists = files.some((f) => f.name === 'node_modules');
-    if (exists) return files;
+    const seen = new Set<string>();
+    const uniqueFiles = files.filter((f) => {
+      if (seen.has(f.id)) return false;
+      seen.add(f.id);
+      return true;
+    });
+
+    if (!hasNodeModules) return uniqueFiles;
+    const exists = uniqueFiles.some((f) => f.name === 'node_modules' || f.id === '__virtual_node_modules__');
+    if (exists) return uniqueFiles;
     const virtualNodeModules: FileNode = {
       id: '__virtual_node_modules__',
       name: 'node_modules',
@@ -351,7 +358,7 @@ export const FileTree: React.FC<FileTreeProps> = ({
       isVirtual: true,
       children: [],
     };
-    return [virtualNodeModules, ...files];
+    return [virtualNodeModules, ...uniqueFiles];
   }, [files, hasNodeModules]);
   const [isHovered, setIsHovered] = useState(false);
   const [dialogMode, setDialogMode] = useState<DialogMode | null>(null);

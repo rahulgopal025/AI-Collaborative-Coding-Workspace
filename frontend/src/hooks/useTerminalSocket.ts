@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import { TerminalLine } from "@/types/editor";
 import { useEditorStore } from "@/store/editorStore";
-import { authTokenStore } from "@/lib/api";
+import { authTokenStore, apiRequest } from "@/lib/api";
 
 export interface TerminalSession {
   id: string;
@@ -55,13 +55,10 @@ export const useTerminalSocket = (projectId?: string) => {
       socket.emit("runner:check-docker");
 
       // Check node_modules presence on connect
-      fetch(`${backendUrl}/api/project-runner/${projectId}/node-modules`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      })
-        .then((r) => r.json())
+      apiRequest<{ hasNodeModules: boolean }>(`/project-runner/${projectId}/node-modules`)
         .then((res) => {
-          if (res?.data?.hasNodeModules !== undefined) {
-            setHasNodeModules(res.data.hasNodeModules);
+          if (res?.hasNodeModules !== undefined) {
+            setHasNodeModules(res.hasNodeModules);
           }
         })
         .catch(() => {});

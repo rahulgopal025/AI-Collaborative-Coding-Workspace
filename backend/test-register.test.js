@@ -41,7 +41,8 @@ describe('POST /api/auth/register', () => {
     expect(response.body).toEqual({
       success: true,
       data: {
-        user: mockUser
+        user: mockUser,
+        token: expect.any(String)
       }
     });
   });

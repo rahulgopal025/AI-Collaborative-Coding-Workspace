@@ -35,6 +35,7 @@ const runnerGateway = setupProjectRunnerGateway(io);
 async function startServer() {
   try {
     await connectDatabase();
+    await codeServerService.initialize();
 
     server.listen(PORT, "0.0.0.0", () => {
       logger.info(

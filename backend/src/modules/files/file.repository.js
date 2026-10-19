@@ -112,14 +112,36 @@ async function deleteFolder(id) {
   });
 }
 
+async function findFileByNameAndFolder(projectId, folderId, name) {
+  return prisma.file.findFirst({
+    where: {
+      projectId,
+      folderId: folderId || null,
+      name,
+    },
+  });
+}
+
+async function findFolderByNameAndParent(projectId, parentId, name) {
+  return prisma.folder.findFirst({
+    where: {
+      projectId,
+      parentId: parentId || null,
+      name,
+    },
+  });
+}
+
 module.exports = {
   createFile,
   findFileById,
+  findFileByNameAndFolder,
   findFilesByProjectId,
   updateFile,
   deleteFile,
   createFolder,
   findFolderById,
+  findFolderByNameAndParent,
   findFoldersByProjectId,
   updateFolder,
   deleteFolder,

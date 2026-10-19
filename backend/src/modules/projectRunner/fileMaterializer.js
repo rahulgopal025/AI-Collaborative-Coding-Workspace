@@ -44,12 +44,10 @@ async function materialize(projectId) {
   const baseDir = path.join(os.tmpdir(), 'codecollab-runner');
   const projectDir = path.join(baseDir, projectId);
 
-  // Clean up any previous materialization
-  if (fs.existsSync(projectDir)) {
-    fs.rmSync(projectDir, { recursive: true, force: true });
+  // Ensure project directory exists without wiping node_modules or dependencies
+  if (!fs.existsSync(projectDir)) {
+    fs.mkdirSync(projectDir, { recursive: true });
   }
-
-  fs.mkdirSync(projectDir, { recursive: true });
 
   // Build folder ID → full path map
   const folderPaths = buildFolderPaths(folders, projectDir);

@@ -124,23 +124,137 @@ async function pullImage(onProgress) {
   if (onProgress) onProgress('Image pull complete');
 }
 
+/** In-flight container start promises to prevent race conditions */
+const startingContainers = new Map();
+
 /**
- * Allocate the next available port for a code-server container.
- * @returns {number}
+ * Scan Docker for an existing container belonging to this project.
+ * If running, adopt it into activeSessions and return the session info.
+ * If stopped or dead, safely remove it to prevent naming/port conflicts.
  */
-function allocatePort() {
-  const usedPorts = new Set();
-  for (const session of activeSessions.values()) {
-    usedPorts.add(session.port);
-  }
+async function findAndAdoptContainer(projectId, projectDir, socketId) {
+  try {
+    const containers = await docker.listContainers({
+      all: true,
+      filters: { label: [`codecollab.project=${projectId}`] },
+    });
 
-  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
-    if (!usedPorts.has(port)) {
-      return port;
+    for (const info of containers) {
+      const container = docker.getContainer(info.Id);
+      if (info.State === 'running') {
+        const inspect = await container.inspect();
+        const hostPort = parseInt(inspect.NetworkSettings.Ports?.['8080/tcp']?.[0]?.HostPort, 10);
+        const p5173 = parseInt(inspect.NetworkSettings.Ports?.['5173/tcp']?.[0]?.HostPort, 10);
+        const p3000 = parseInt(inspect.NetworkSettings.Ports?.['3000/tcp']?.[0]?.HostPort, 10);
+        const p5000 = parseInt(inspect.NetworkSettings.Ports?.['5000/tcp']?.[0]?.HostPort, 10);
+        const pwdEnv = inspect.Config.Env?.find((e) => e.startsWith('PASSWORD='));
+        const password = pwdEnv ? pwdEnv.split('=')[1] : '';
+
+        let session = activeSessions.get(projectId);
+        if (!session) {
+          session = {
+            container,
+            containerId: info.Id,
+            containerName: inspect.Name.replace(/^\//, ''),
+            projectDir,
+            port: hostPort,
+            previewPorts: { 5173: p5173, 3000: p3000, 5000: p5000 },
+            password,
+            createdAt: new Date(inspect.Created).getTime(),
+            timeoutId: null,
+            users: new Set(),
+          };
+          activeSessions.set(projectId, session);
+        }
+
+        if (socketId) {
+          session.users.add(socketId);
+        }
+        resetTimeout(projectId);
+
+        logger.info(
+          { projectId, socketId, containerId: session.containerId, port: session.port },
+          'Reusing healthy existing running code-server container from Docker'
+        );
+
+        return {
+          port: session.port,
+          password: session.password,
+          containerId: session.containerId,
+          previewPorts: session.previewPorts,
+          isNew: false,
+        };
+      } else {
+        // Container is stopped/created/exited/dead. Clean it up safely.
+        try {
+          await container.remove({ force: true });
+          logger.info({ projectId, containerId: info.Id }, 'Cleaned up inactive container');
+        } catch (e) {
+          logger.debug({ error: e.message }, 'Failed to remove inactive container');
+        }
+      }
     }
+  } catch (err) {
+    logger.warn({ error: err.message, projectId }, 'Error inspecting Docker containers');
   }
+  return null;
+}
 
-  throw new Error('No available ports for code-server containers');
+/**
+ * Scan Docker on server startup to adopt any already-running containers and clean up dead ones.
+ */
+async function initialize() {
+  try {
+    const containers = await docker.listContainers({
+      all: true,
+      filters: { label: ['codecollab.managed=true'] },
+    });
+
+    for (const info of containers) {
+      const projectId = info.Labels?.['codecollab.project'];
+      if (!projectId) continue;
+
+      const container = docker.getContainer(info.Id);
+      if (info.State === 'running') {
+        const inspect = await container.inspect();
+        const hostPort = parseInt(inspect.NetworkSettings.Ports?.['8080/tcp']?.[0]?.HostPort, 10);
+        const p5173 = parseInt(inspect.NetworkSettings.Ports?.['5173/tcp']?.[0]?.HostPort, 10);
+        const p3000 = parseInt(inspect.NetworkSettings.Ports?.['3000/tcp']?.[0]?.HostPort, 10);
+        const p5000 = parseInt(inspect.NetworkSettings.Ports?.['5000/tcp']?.[0]?.HostPort, 10);
+        const pwdEnv = inspect.Config.Env?.find((e) => e.startsWith('PASSWORD='));
+        const password = pwdEnv ? pwdEnv.split('=')[1] : '';
+
+        const fileMaterializer = require('./fileMaterializer');
+        const projectDir = fileMaterializer.getProjectDir(projectId);
+
+        activeSessions.set(projectId, {
+          container,
+          containerId: info.Id,
+          containerName: inspect.Name.replace(/^\//, ''),
+          projectDir,
+          port: hostPort,
+          previewPorts: { 5173: p5173, 3000: p3000, 5000: p5000 },
+          password,
+          createdAt: new Date(inspect.Created).getTime(),
+          timeoutId: null,
+          users: new Set(),
+        });
+
+        logger.info(
+          { projectId, containerId: info.Id, port: hostPort },
+          'Adopted running container on startup'
+        );
+      } else {
+        // Clean up stale non-running container
+        try {
+          await container.remove({ force: true });
+          logger.info({ projectId, containerId: info.Id }, 'Cleaned up stale container on startup');
+        } catch {}
+      }
+    }
+  } catch (err) {
+    logger.warn({ error: err.message }, 'Failed container auto-discovery on startup');
+  }
 }
 
 /**
@@ -150,13 +264,13 @@ function allocatePort() {
  * @param {string} projectId
  * @param {string} projectDir - Absolute path to materialized project files on host
  * @param {string} socketId - The connecting socket's ID
- * @returns {Promise<{ port: number, password: string, containerId: string, isNew: boolean }>}
+ * @returns {Promise<{ port: number, password: string, containerId: string, previewPorts: object, isNew: boolean }>}
  */
 async function startContainer(projectId, projectDir, socketId) {
-  // Return existing session if container is already running for this project
+  // 1. Return existing in-memory session if already active
   const existing = activeSessions.get(projectId);
   if (existing) {
-    existing.users.add(socketId);
+    if (socketId) existing.users.add(socketId);
     resetTimeout(projectId);
 
     logger.info(
@@ -168,111 +282,148 @@ async function startContainer(projectId, projectDir, socketId) {
       port: existing.port,
       password: existing.password,
       containerId: existing.containerId,
+      previewPorts: existing.previewPorts,
       isNew: false,
     };
   }
 
-  // Verify the image is available
-  try {
-    await docker.getImage(CODE_SERVER_IMAGE).inspect();
-  } catch {
-    throw new Error(
-      `Docker image ${CODE_SERVER_IMAGE} not found locally. ` +
-      `Pull it first: docker pull ${CODE_SERVER_IMAGE}`
-    );
+  // 2. Concurrency protection: coalesce concurrent starts for the same project
+  if (startingContainers.has(projectId)) {
+    const result = await startingContainers.get(projectId);
+    const session = activeSessions.get(projectId);
+    if (session && socketId) {
+      session.users.add(socketId);
+      resetTimeout(projectId);
+    }
+    return result;
   }
 
-  const port = allocatePort();
-  const password = crypto.randomBytes(16).toString('hex');
-  const containerName = `codecollab-cs-${projectId.substring(0, 8)}-${Date.now()}`;
+  const startPromise = (async () => {
+    // 3. Check Docker for an existing container (e.g. running before backend restart)
+    const adopted = await findAndAdoptContainer(projectId, projectDir, socketId);
+    if (adopted) {
+      return adopted;
+    }
 
-  const previewPorts = {
-    5173: port + 100, // Vite dev server
-    3000: port + 200, // React / Next dev server
-    5000: port + 300, // Node.js / Express backend
-  };
+    // 4. Verify the image is available
+    try {
+      await docker.getImage(CODE_SERVER_IMAGE).inspect();
+    } catch {
+      throw new Error(
+        `Docker image ${CODE_SERVER_IMAGE} not found locally. ` +
+        `Pull it first: docker pull ${CODE_SERVER_IMAGE}`
+      );
+    }
 
-  logger.info(
-    { projectId, port, previewPorts, containerName, projectDir },
-    'Creating code-server container'
-  );
+    const password = crypto.randomBytes(16).toString('hex');
+    const containerName = `codecollab-cs-${projectId.substring(0, 8)}-${Date.now()}`;
 
-  const container = await docker.createContainer({
-    Image: CODE_SERVER_IMAGE,
-    name: containerName,
-    ExposedPorts: {
-      '8080/tcp': {},
-      '5173/tcp': {},
-      '3000/tcp': {},
-      '5000/tcp': {},
-    },
-    Env: [
-      `PASSWORD=${password}`,
-      'NODE_ENV=development',
-      'NPM_CONFIG_UPDATE_NOTIFIER=false',
-      'NPM_CONFIG_FUND=false',
-    ],
-    WorkingDir: '/workspace',
-    HostConfig: {
-      Binds: [`${projectDir.replace(/\\/g, '/')}:/workspace`],
-      PortBindings: {
-        '8080/tcp': [{ HostIp: '127.0.0.1', HostPort: String(port) }],
-        '5173/tcp': [{ HostIp: '127.0.0.1', HostPort: String(previewPorts[5173]) }],
-        '3000/tcp': [{ HostIp: '127.0.0.1', HostPort: String(previewPorts[3000]) }],
-        '5000/tcp': [{ HostIp: '127.0.0.1', HostPort: String(previewPorts[5000]) }],
+    logger.info(
+      { projectId, containerName, projectDir },
+      'Creating code-server container with dynamic host port bindings'
+    );
+
+    // Bind host ports dynamically to loopback (HostPort: '') so Docker allocates guaranteed-free ports
+    const container = await docker.createContainer({
+      Image: CODE_SERVER_IMAGE,
+      name: containerName,
+      ExposedPorts: {
+        '8080/tcp': {},
+        '5173/tcp': {},
+        '3000/tcp': {},
+        '5000/tcp': {},
       },
-      Memory: CONTAINER_LIMITS.Memory,
-      NanoCpus: CONTAINER_LIMITS.NanoCpus,
-      PidsLimit: CONTAINER_LIMITS.PidsLimit,
-      SecurityOpt: ['no-new-privileges'],
-      AutoRemove: false,
-    },
-    Labels: {
-      'codecollab.project': projectId,
-      'codecollab.managed': 'true',
-      'codecollab.type': 'code-server',
-    },
-    // code-server entrypoint handles its own command
-    Cmd: [
-      '--bind-addr', '0.0.0.0:8080',
-      '--auth', 'password',
-      '--disable-telemetry',
-      '/workspace',
-    ],
-  });
+      Env: [
+        `PASSWORD=${password}`,
+        'NODE_ENV=development',
+        'NPM_CONFIG_UPDATE_NOTIFIER=false',
+        'NPM_CONFIG_FUND=false',
+      ],
+      WorkingDir: '/workspace',
+      HostConfig: {
+        Binds: [`${projectDir.replace(/\\/g, '/')}:/workspace`],
+        PortBindings: {
+          '8080/tcp': [{ HostIp: '127.0.0.1', HostPort: '' }],
+          '5173/tcp': [{ HostIp: '127.0.0.1', HostPort: '' }],
+          '3000/tcp': [{ HostIp: '127.0.0.1', HostPort: '' }],
+          '5000/tcp': [{ HostIp: '127.0.0.1', HostPort: '' }],
+        },
+        Memory: CONTAINER_LIMITS.Memory,
+        NanoCpus: CONTAINER_LIMITS.NanoCpus,
+        PidsLimit: CONTAINER_LIMITS.PidsLimit,
+        SecurityOpt: ['no-new-privileges'],
+        AutoRemove: false,
+      },
+      Labels: {
+        'codecollab.project': projectId,
+        'codecollab.managed': 'true',
+        'codecollab.type': 'code-server',
+      },
+      Cmd: [
+        '--bind-addr', '0.0.0.0:8080',
+        '--auth', 'password',
+        '--disable-telemetry',
+        '/workspace',
+      ],
+    });
 
-  await container.start();
+    try {
+      await container.start();
+    } catch (startErr) {
+      logger.error({ projectId, error: startErr.message }, 'Failed to start container, removing...');
+      try {
+        await container.remove({ force: true });
+      } catch {}
+      throw startErr;
+    }
 
-  const timeoutId = setTimeout(() => {
-    logger.warn({ projectId }, 'code-server container lifetime exceeded');
-    stopContainer(projectId);
-  }, MAX_CONTAINER_LIFETIME_MS);
+    // Inspect the started container to extract Docker's dynamically assigned host ports
+    const inspect = await container.inspect();
+    const port = parseInt(inspect.NetworkSettings.Ports?.['8080/tcp']?.[0]?.HostPort, 10);
+    const previewPorts = {
+      5173: parseInt(inspect.NetworkSettings.Ports?.['5173/tcp']?.[0]?.HostPort, 10),
+      3000: parseInt(inspect.NetworkSettings.Ports?.['3000/tcp']?.[0]?.HostPort, 10),
+      5000: parseInt(inspect.NetworkSettings.Ports?.['5000/tcp']?.[0]?.HostPort, 10),
+    };
 
-  activeSessions.set(projectId, {
-    container,
-    containerId: container.id,
-    containerName,
-    projectDir,
-    port,
-    previewPorts,
-    password,
-    createdAt: Date.now(),
-    timeoutId,
-    users: new Set([socketId]),
-  });
+    const timeoutId = setTimeout(() => {
+      logger.warn({ projectId }, 'code-server container lifetime exceeded');
+      stopContainer(projectId);
+    }, MAX_CONTAINER_LIFETIME_MS);
 
-  logger.info(
-    { projectId, containerId: container.id, port, previewPorts, containerName },
-    'code-server container started'
-  );
+    activeSessions.set(projectId, {
+      container,
+      containerId: container.id,
+      containerName,
+      projectDir,
+      port,
+      previewPorts,
+      password,
+      createdAt: Date.now(),
+      timeoutId,
+      users: new Set(socketId ? [socketId] : []),
+    });
 
-  return {
-    port,
-    previewPorts,
-    password,
-    containerId: container.id,
-    isNew: true,
-  };
+    logger.info(
+      { projectId, containerId: container.id, port, previewPorts, containerName },
+      'code-server container started successfully'
+    );
+
+    return {
+      port,
+      previewPorts,
+      password,
+      containerId: container.id,
+      isNew: true,
+    };
+  })();
+
+  startingContainers.set(projectId, startPromise);
+  try {
+    return await startPromise;
+  } finally {
+    startingContainers.delete(projectId);
+  }
 }
 
 /**
@@ -531,6 +682,7 @@ async function destroyAll() {
 }
 
 module.exports = {
+  initialize,
   checkStatus,
   pullImage,
   startContainer,
