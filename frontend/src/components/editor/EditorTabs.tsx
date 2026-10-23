@@ -46,9 +46,9 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({ className }) => {
   };
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
-  const isHtmlPreviewable = activeTab?.language.toLowerCase() === 'html' || activeTab?.language.toLowerCase() === 'css';
+  const isHtmlPreviewable = Boolean(activeTab);
   const isExecutable = activeTab && isExecutableLanguage(activeTab.language);
-  const hasActions = activeTab && (isHtmlPreviewable || isExecutable);
+  const hasActions = Boolean(activeTab);
   const hasOverflow = canScrollLeft || canScrollRight;
 
   if (tabs.length === 0) return null;

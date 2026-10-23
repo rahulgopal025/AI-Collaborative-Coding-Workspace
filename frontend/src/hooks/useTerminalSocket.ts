@@ -28,6 +28,18 @@ export const useTerminalSocket = (projectId?: string) => {
 
   const socketRef = useRef<Socket | null>(null);
   const dataListenersRef = useRef<Map<string, (data: string) => void>>(new Map());
+  const activeSessionsDimensionsRef = useRef<Map<string, { cols: number; rows: number }>>(
+    new Map([['default', { cols: 80, rows: 24 }]])
+  );
+
+  // Reset sessions and connection state when switching projects
+  useEffect(() => {
+    setSessions([{ id: "default", name: "Terminal 1", isReady: false }]);
+    setActiveSessionId("default");
+    setIsConnected(false);
+    setConnectionError(null);
+    activeSessionsDimensionsRef.current = new Map([['default', { cols: 80, rows: 24 }]]);
+  }, [projectId]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -36,23 +48,28 @@ export const useTerminalSocket = (projectId?: string) => {
       import.meta.env.VITE_API_URL?.replace("/api", "") || "http://localhost:5000";
     const token = authTokenStore.get();
 
-    // Connect to /project-runner namespace with JWT authentication
+    // Connect to /project-runner namespace with JWT authentication and project ID
     const socket = io(`${backendUrl}/project-runner`, {
       transports: ["websocket", "polling"],
       reconnection: true,
-      auth: { token },
+      auth: { token, projectId },
       query: { token, projectId },
     });
 
     socketRef.current = socket;
 
     socket.on("connect", () => {
-      console.log("[ProjectRunner] Terminal socket connected:", socket.id);
+      console.log(`[ProjectRunner] Terminal socket connected (${socket.id}) for project: ${projectId}`);
       setIsConnected(true);
       setConnectionError(null);
 
       // Check Docker status
       socket.emit("runner:check-docker");
+
+      // Auto-initialize terminal session(s) on connect/reconnect with current projectId
+      activeSessionsDimensionsRef.current.forEach(({ cols, rows }, sessId) => {
+        socket.emit("terminal:init", { projectId, sessionId: sessId, cols, rows });
+      });
 
       // Check node_modules presence on connect
       apiRequest<{ hasNodeModules: boolean }>(`/project-runner/${projectId}/node-modules`)
@@ -120,8 +137,11 @@ export const useTerminalSocket = (projectId?: string) => {
 
   const initSession = useCallback(
     (sessionId: string, cols = 80, rows = 24) => {
-      if (!socketRef.current || !projectId) return;
-      socketRef.current.emit("terminal:init", { projectId, sessionId, cols, rows });
+      if (!projectId) return;
+      activeSessionsDimensionsRef.current.set(sessionId, { cols, rows });
+      if (socketRef.current) {
+        socketRef.current.emit("terminal:init", { projectId, sessionId, cols, rows });
+      }
     },
     [projectId]
   );

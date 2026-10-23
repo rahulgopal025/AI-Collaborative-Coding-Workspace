@@ -159,12 +159,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
   const currentLanguage = activeTab?.language || 'plaintext';
   const isHtmlFile = currentLanguage.toLowerCase() === 'html' || currentLanguage.toLowerCase() === 'css';
 
-  // Reset preview layout when switching away from HTML/CSS files
-  useEffect(() => {
-    if (!isHtmlFile && htmlPreviewLayout !== 'editor') {
-      setHtmlPreviewLayout('editor');
-    }
-  }, [isHtmlFile]);
+
 
   const {
     participants,
@@ -615,13 +610,17 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
                   </div>
                 )}
 
-                {/* HTML Preview — shown in split & preview modes for html/css files */}
-                {activeTab && (htmlPreviewLayout === 'split' || htmlPreviewLayout === 'preview') && isHtmlFile && (
+                {/* Live Preview / HTML Preview — shown in split & preview modes */}
+                {activeTab && (htmlPreviewLayout === 'split' || htmlPreviewLayout === 'preview') && (
                   <div
                     className="flex min-w-0 flex-col overflow-hidden border-l border-border"
                     style={{ flex: htmlPreviewLayout === 'preview' ? '1 1 100%' : '1 1 50%' }}
                   >
-                    <HTMLPreview code={currentCode} onClose={() => setHtmlPreviewLayout('editor')} />
+                    <HTMLPreview
+                      projectId={projectId}
+                      code={currentCode}
+                      onClose={() => setHtmlPreviewLayout('editor')}
+                    />
                   </div>
                 )}
 
@@ -654,6 +653,17 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
                       >
                         AI Console
                       </button>
+                      <button
+                        onClick={() => setActiveBottomPanel('preview')}
+                        className="px-4 py-1.5 text-[11px] font-medium tracking-wide uppercase transition-colors border-t-2"
+                        style={{
+                          borderTopColor: activeBottomPanel === 'preview' ? '#50fa7b' : 'transparent',
+                          color: activeBottomPanel === 'preview' ? '#50fa7b' : '#6272a4',
+                          backgroundColor: activeBottomPanel === 'preview' ? 'rgba(80,250,123,0.07)' : 'transparent',
+                        }}
+                      >
+                        Live Preview
+                      </button>
                       <div className="flex-1" />
                       <button
                         className="px-2 py-1 text-[11px] hover:bg-white/5 transition-colors"
@@ -667,6 +677,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
                     <div className="flex-1 overflow-hidden">
                       {activeBottomPanel === 'terminal' && (
                         <TerminalPanel
+                          key={projectId}
                           className="h-full"
                           projectId={projectId}
                           codeToRun={currentCode}
@@ -680,6 +691,14 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
                           className="h-full"
                           projectId={projectId}
                           onFilesChanged={() => void refetch(true)}
+                        />
+                      )}
+                      {activeBottomPanel === 'preview' && (
+                        <HTMLPreview
+                          key={projectId}
+                          projectId={projectId}
+                          code={currentCode}
+                          className="h-full"
                         />
                       )}
                     </div>

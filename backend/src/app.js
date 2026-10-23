@@ -8,7 +8,14 @@ const { errorHandler } = require('./middlewares/error.middleware');
 const app = express();
 
 // Security and utility middlewares
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: false,
+  crossOriginOpenerPolicy: false,
+  referrerPolicy: { policy: 'no-referrer-when-downgrade' },
+  frameguard: false,
+}));
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],

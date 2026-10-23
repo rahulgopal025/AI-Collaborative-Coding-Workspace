@@ -28,7 +28,33 @@ function getDockerClient() {
   return new Docker();
 }
 
-const docker = getDockerClient();
+let docker = getDockerClient();
+
+/**
+ * Ensure Docker daemon is reachable, with automatic Windows named pipe fallback.
+ * @returns {Promise<Docker>}
+ */
+async function ensureConnectedDocker() {
+  try {
+    await docker.ping();
+    return docker;
+  } catch (err) {
+    if (process.platform === 'win32' && !process.env.DOCKER_SOCKET_PATH) {
+      // Try fallback to docker_engine named pipe if dockerDesktopLinuxEngine is unavailable
+      try {
+        const fallbackClient = new Docker({ socketPath: '//./pipe/docker_engine' });
+        await fallbackClient.ping();
+        logger.info('Connected to Docker via fallback pipe //./pipe/docker_engine');
+        docker = fallbackClient;
+        return docker;
+      } catch {}
+    }
+    throw new Error(
+      `Docker daemon is not running or unreachable (${err.message}). ` +
+      `Please ensure Docker Desktop is started.`
+    );
+  }
+}
 
 /**
  * Docker image for code-server.
@@ -36,6 +62,65 @@ const docker = getDockerClient();
  * Node.js is installed at container start via an init script.
  */
 const CODE_SERVER_IMAGE = 'codercom/code-server:latest';
+
+/**
+ * Known valid image names/aliases for CodeCollabAI project runner.
+ */
+const ACCEPTED_IMAGE_ALIASES = [
+  'codercom/code-server:latest',
+  'codercom/code-server',
+  'codecollab/workspace:latest',
+  'codecollab/workspace',
+];
+
+/**
+ * Verify whether Docker daemon is reachable and resolve the available image name.
+ * Checks direct inspect first, then scans local images via listImages().
+ * @returns {Promise<string>} The verified image name to use
+ */
+async function resolveAndVerifyImage() {
+  const client = await ensureConnectedDocker();
+
+  // 1. Direct inspect check for primary image
+  try {
+    await client.getImage(CODE_SERVER_IMAGE).inspect();
+    return CODE_SERVER_IMAGE;
+  } catch (err) {
+    // If it's a daemon connection error, rethrow the real error
+    if (!err.statusCode || err.statusCode !== 404) {
+      logger.warn({ error: err.message, statusCode: err.statusCode }, 'Docker image inspect error');
+      throw new Error(`Docker connection error while inspecting image: ${err.message}`);
+    }
+  }
+
+  // 2. Query all local images to find any accepted alias or matching tag
+  try {
+    const images = await client.listImages();
+    for (const img of images) {
+      if (img.RepoTags && Array.isArray(img.RepoTags)) {
+        for (const tag of img.RepoTags) {
+          if (
+            ACCEPTED_IMAGE_ALIASES.includes(tag) ||
+            tag.endsWith('/' + CODE_SERVER_IMAGE) ||
+            tag.endsWith('/codecollab/workspace:latest')
+          ) {
+            logger.info({ matchedTag: tag, imageId: img.Id }, 'Resolved local Docker image via tag match');
+            return tag;
+          }
+        }
+      }
+    }
+  } catch (listErr) {
+    logger.warn({ error: listErr.message }, 'Failed to list local Docker images');
+    throw new Error(`Failed to list Docker images: ${listErr.message}`);
+  }
+
+  // 3. Truly not found locally
+  throw new Error(
+    `Docker image ${CODE_SERVER_IMAGE} not found locally in Docker Desktop. ` +
+    `Pull it first: docker pull ${CODE_SERVER_IMAGE}`
+  );
+}
 
 /**
  * Active code-server sessions, keyed by projectId.
@@ -64,15 +149,16 @@ const PORT_RANGE_END = 18180;
 
 /**
  * Check if Docker is available and the code-server image exists locally.
- * @returns {Promise<{ available: boolean, version?: string, imageReady?: boolean, error?: string }>}
+ * @returns {Promise<{ available: boolean, version?: string, imageReady?: boolean, error?: string, image?: string }>}
  */
 async function checkStatus() {
   try {
-    const versionInfo = await docker.version();
+    const client = await ensureConnectedDocker();
+    const versionInfo = await client.version();
     let imageReady = false;
 
     try {
-      await docker.getImage(CODE_SERVER_IMAGE).inspect();
+      await resolveAndVerifyImage();
       imageReady = true;
     } catch {
       imageReady = false;
@@ -85,7 +171,7 @@ async function checkStatus() {
       image: CODE_SERVER_IMAGE,
     };
   } catch (err) {
-    return { available: false, error: err.message };
+    return { available: false, error: err.message, imageReady: false, image: CODE_SERVER_IMAGE };
   }
 }
 
@@ -96,18 +182,23 @@ async function checkStatus() {
  */
 async function pullImage(onProgress) {
   try {
-    await docker.getImage(CODE_SERVER_IMAGE).inspect();
+    await resolveAndVerifyImage();
     if (onProgress) onProgress('Image already available locally');
     return;
-  } catch {
-    // Image not found, pull it
+  } catch (err) {
+    // If it's a daemon connection failure, rethrow
+    if (err.message.includes('Docker daemon is not running')) {
+      throw err;
+    }
+    // Image truly not found, proceed to pull
   }
 
+  const client = await ensureConnectedDocker();
   if (onProgress) onProgress(`Pulling ${CODE_SERVER_IMAGE}... (this may take a few minutes)`);
 
-  const stream = await docker.pull(CODE_SERVER_IMAGE);
+  const stream = await client.pull(CODE_SERVER_IMAGE);
   await new Promise((resolve, reject) => {
-    docker.modem.followProgress(
+    client.modem.followProgress(
       stream,
       (err) => {
         if (err) reject(err);
@@ -129,8 +220,9 @@ const startingContainers = new Map();
 
 /**
  * Scan Docker for an existing container belonging to this project.
- * If running, adopt it into activeSessions and return the session info.
- * If stopped or dead, safely remove it to prevent naming/port conflicts.
+ * If running and strictly matching project label AND workspace mount path,
+ * adopt it into activeSessions and return the session info.
+ * If stopped, dead, or misconfigured, safely remove it to prevent conflicts.
  */
 async function findAndAdoptContainer(projectId, projectDir, socketId) {
   try {
@@ -143,6 +235,36 @@ async function findAndAdoptContainer(projectId, projectDir, socketId) {
       const container = docker.getContainer(info.Id);
       if (info.State === 'running') {
         const inspect = await container.inspect();
+
+        // 1. Strict label verification
+        const containerProject = inspect.Config?.Labels?.['codecollab.project'];
+        if (containerProject !== projectId) {
+          logger.warn(
+            { projectId, containerId: info.Id, containerProject },
+            'Container project label mismatch during adoption — skipping'
+          );
+          continue;
+        }
+
+        // 2. Strict workspace mount verification
+        const expectedDir = projectDir.replace(/\\/g, '/').toLowerCase();
+        const mounts = inspect.Mounts || [];
+        const workspaceMount = mounts.find((m) => m.Destination === '/workspace');
+        if (workspaceMount) {
+          const actualSource = workspaceMount.Source.replace(/\\/g, '/').toLowerCase();
+          if (actualSource !== expectedDir) {
+            logger.warn(
+              { projectId, containerId: info.Id, expectedDir, actualSource },
+              'Container mount path mismatch — stopping misconfigured container'
+            );
+            try {
+              await container.stop({ t: 2 });
+              await container.remove({ force: true });
+            } catch {}
+            continue;
+          }
+        }
+
         const hostPort = parseInt(inspect.NetworkSettings.Ports?.['8080/tcp']?.[0]?.HostPort, 10);
         const p5173 = parseInt(inspect.NetworkSettings.Ports?.['5173/tcp']?.[0]?.HostPort, 10);
         const p3000 = parseInt(inspect.NetworkSettings.Ports?.['3000/tcp']?.[0]?.HostPort, 10);
@@ -174,7 +296,7 @@ async function findAndAdoptContainer(projectId, projectDir, socketId) {
 
         logger.info(
           { projectId, socketId, containerId: session.containerId, port: session.port },
-          'Reusing healthy existing running code-server container from Docker'
+          'Reusing healthy, verified existing running code-server container from Docker'
         );
 
         return {
@@ -217,15 +339,34 @@ async function initialize() {
       const container = docker.getContainer(info.Id);
       if (info.State === 'running') {
         const inspect = await container.inspect();
+
+        // Verify mount path matches this project's expected directory
+        const fileMaterializer = require('./fileMaterializer');
+        const projectDir = fileMaterializer.getProjectDir(projectId);
+        const expectedDir = projectDir.replace(/\\/g, '/').toLowerCase();
+        const mounts = inspect.Mounts || [];
+        const workspaceMount = mounts.find((m) => m.Destination === '/workspace');
+        if (workspaceMount) {
+          const actualSource = workspaceMount.Source.replace(/\\/g, '/').toLowerCase();
+          if (actualSource !== expectedDir) {
+            logger.warn(
+              { projectId, containerId: info.Id, expectedDir, actualSource },
+              'Stale/mismatched container mount on startup — cleaning up'
+            );
+            try {
+              await container.stop({ t: 2 });
+              await container.remove({ force: true });
+            } catch {}
+            continue;
+          }
+        }
+
         const hostPort = parseInt(inspect.NetworkSettings.Ports?.['8080/tcp']?.[0]?.HostPort, 10);
         const p5173 = parseInt(inspect.NetworkSettings.Ports?.['5173/tcp']?.[0]?.HostPort, 10);
         const p3000 = parseInt(inspect.NetworkSettings.Ports?.['3000/tcp']?.[0]?.HostPort, 10);
         const p5000 = parseInt(inspect.NetworkSettings.Ports?.['5000/tcp']?.[0]?.HostPort, 10);
         const pwdEnv = inspect.Config.Env?.find((e) => e.startsWith('PASSWORD='));
         const password = pwdEnv ? pwdEnv.split('=')[1] : '';
-
-        const fileMaterializer = require('./fileMaterializer');
-        const projectDir = fileMaterializer.getProjectDir(projectId);
 
         activeSessions.set(projectId, {
           container,
@@ -267,24 +408,43 @@ async function initialize() {
  * @returns {Promise<{ port: number, password: string, containerId: string, previewPorts: object, isNew: boolean }>}
  */
 async function startContainer(projectId, projectDir, socketId) {
-  // 1. Return existing in-memory session if already active
+  // 1. Return existing in-memory session if already active, running, and correctly mounted
   const existing = activeSessions.get(projectId);
   if (existing) {
-    if (socketId) existing.users.add(socketId);
-    resetTimeout(projectId);
+    try {
+      const inspect = await existing.container.inspect();
+      if (!inspect.State?.Running) {
+        logger.warn({ projectId, containerId: existing.containerId }, 'Existing container is not running — purging session');
+        activeSessions.delete(projectId);
+      } else {
+        const expectedDir = projectDir.replace(/\\/g, '/').toLowerCase();
+        const mounts = inspect.Mounts || [];
+        const workspaceMount = mounts.find((m) => m.Destination === '/workspace');
+        if (workspaceMount && workspaceMount.Source.replace(/\\/g, '/').toLowerCase() !== expectedDir) {
+          logger.warn({ projectId, containerId: existing.containerId }, 'Existing container has wrong mount — removing');
+          await stopContainer(projectId);
+        } else {
+          if (socketId) existing.users.add(socketId);
+          resetTimeout(projectId);
 
-    logger.info(
-      { projectId, socketId, containerId: existing.containerId },
-      'User joined existing code-server container'
-    );
+          logger.info(
+            { projectId, socketId, containerId: existing.containerId },
+            'User joined verified existing code-server container'
+          );
 
-    return {
-      port: existing.port,
-      password: existing.password,
-      containerId: existing.containerId,
-      previewPorts: existing.previewPorts,
-      isNew: false,
-    };
+          return {
+            port: existing.port,
+            password: existing.password,
+            containerId: existing.containerId,
+            previewPorts: existing.previewPorts,
+            isNew: false,
+          };
+        }
+      }
+    } catch (e) {
+      logger.warn({ projectId, error: e.message }, 'Failed to inspect existing container — clearing session');
+      activeSessions.delete(projectId);
+    }
   }
 
   // 2. Concurrency protection: coalesce concurrent starts for the same project
@@ -305,27 +465,22 @@ async function startContainer(projectId, projectDir, socketId) {
       return adopted;
     }
 
-    // 4. Verify the image is available
-    try {
-      await docker.getImage(CODE_SERVER_IMAGE).inspect();
-    } catch {
-      throw new Error(
-        `Docker image ${CODE_SERVER_IMAGE} not found locally. ` +
-        `Pull it first: docker pull ${CODE_SERVER_IMAGE}`
-      );
-    }
+    // 4. Verify and resolve the image available locally
+    const verifiedImage = await resolveAndVerifyImage();
 
     const password = crypto.randomBytes(16).toString('hex');
     const containerName = `codecollab-cs-${projectId.substring(0, 8)}-${Date.now()}`;
 
     logger.info(
-      { projectId, containerName, projectDir },
+      { projectId, containerName, projectDir, image: verifiedImage },
       'Creating code-server container with dynamic host port bindings'
     );
 
+    const client = await ensureConnectedDocker();
+
     // Bind host ports dynamically to loopback (HostPort: '') so Docker allocates guaranteed-free ports
-    const container = await docker.createContainer({
-      Image: CODE_SERVER_IMAGE,
+    const container = await client.createContainer({
+      Image: verifiedImage,
       name: containerName,
       ExposedPorts: {
         '8080/tcp': {},
@@ -657,6 +812,32 @@ function getSession(projectId) {
 }
 
 /**
+ * Ensure session is active in memory. If not present in memory,
+ * discovers and adopts any existing container for this project from Docker.
+ * @param {string} projectId
+ * @returns {Promise<object|null>}
+ */
+async function ensureSession(projectId) {
+  let session = activeSessions.get(projectId);
+  if (session) {
+    try {
+      const inspect = await session.container.inspect();
+      if (inspect.State?.Running) {
+        return session;
+      }
+      activeSessions.delete(projectId);
+    } catch {
+      activeSessions.delete(projectId);
+    }
+  }
+
+  const fileMaterializer = require('./fileMaterializer');
+  const projectDir = fileMaterializer.getProjectDir(projectId);
+  await findAndAdoptContainer(projectId, projectDir);
+  return activeSessions.get(projectId) || null;
+}
+
+/**
  * Find which project a socket is connected to.
  * @param {string} socketId
  * @returns {string|null} projectId or null
@@ -691,6 +872,7 @@ module.exports = {
   executeCommand,
   createTerminalSession,
   getSession,
+  ensureSession,
   findProjectBySocket,
   destroyAll,
   CODE_SERVER_IMAGE,

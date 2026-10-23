@@ -108,9 +108,9 @@ const CONTAINER_LIMITS = {
 };
 
 /**
- * Maximum container lifetime in milliseconds (10 minutes).
+ * Maximum container lifetime in milliseconds (4 hours default).
  */
-const MAX_CONTAINER_LIFETIME_MS = 10 * 60 * 1000;
+const MAX_CONTAINER_LIFETIME_MS = parseInt(process.env.CONTAINER_LIFETIME_MS, 10) || (4 * 60 * 60 * 1000);
 
 /**
  * Docker image to use for Node.js project containers.

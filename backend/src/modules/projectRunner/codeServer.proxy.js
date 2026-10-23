@@ -1,18 +1,16 @@
 /**
- * code-server Reverse Proxy.
+ * code-server Reverse Proxy & Live Application Preview Proxy.
  *
- * Provides a complete reverse-proxy for code-server containers:
+ * Provides a complete reverse-proxy for code-server containers and dev servers:
  *   - All HTTP requests (HTML, JS, CSS, fonts, API calls)
- *   - All subpath routing (e.g. /vscode/*, /stable/*)
- *   - WebSocket upgrades (required for code-server terminal and editor)
+ *   - Subpath routing (/workspace/:projectId/* and /preview/:projectId/*)
+ *   - Root-relative Vite asset routing (/@vite/*, /src/*, etc.)
+ *   - WebSocket upgrades (code-server and Vite HMR)
  *
  * Access control:
- *   - JWT authentication required
- *   - Project membership verified
- *   - Per-session password injected server-side (never exposed to browser URL bar)
- *
- * Mount point:
- *   /workspace/:projectId/*  →  http://localhost:<container-port>/*
+ *   - JWT authentication required (via header, query param, or cookie)
+ *   - Project membership verified against PostgreSQL
+ *   - Per-session credentials injected server-side
  */
 
 const { createProxyMiddleware } = require('http-proxy-middleware');
@@ -21,11 +19,93 @@ const { prisma } = require('../../config/database');
 const codeServerService = require('./codeServer.service');
 const logger = require('../../common/utils/logger');
 
+function getOfflineHtml(requestedPort) {
+  return `<!DOCTYPE html>
+<html>
+  <head>
+    <title>Development Server Offline</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        margin: 0;
+        background: #18181b;
+        color: #f4f4f5;
+      }
+      .card {
+        background: #27272a;
+        border: 1px solid #3f3f46;
+        padding: 32px;
+        border-radius: 12px;
+        text-align: center;
+        max-width: 440px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      }
+      .icon {
+        font-size: 36px;
+        margin-bottom: 12px;
+      }
+      h3 {
+        margin: 0 0 10px 0;
+        font-size: 18px;
+        font-weight: 600;
+        color: #fbbf24;
+      }
+      p {
+        color: #a1a1aa;
+        font-size: 13px;
+        line-height: 1.6;
+        margin: 0 0 16px 0;
+      }
+      .code-badge {
+        display: inline-block;
+        background: #18181b;
+        color: #38bdf8;
+        padding: 6px 14px;
+        border-radius: 6px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 13px;
+        margin-bottom: 16px;
+        border: 1px solid #3f3f46;
+      }
+      .btn {
+        background: #6366f1;
+        color: #ffffff;
+        border: none;
+        padding: 10px 22px;
+        border-radius: 6px;
+        font-weight: 600;
+        cursor: pointer;
+        font-size: 13px;
+        transition: background 0.2s;
+      }
+      .btn:hover {
+        background: #4f46e5;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="icon">⚡</div>
+      <h3>Development Server Offline</h3>
+      <p>
+        No web server is currently listening on port <strong>${requestedPort}</strong> inside the container.
+      </p>
+      <div class="code-badge">npm run dev</div>
+      <p style="font-size: 12px; color: #71717a;">
+        Run the command above in the integrated terminal to start your development server, then reload.
+      </p>
+      <button class="btn" onclick="location.reload()">Reload Preview</button>
+    </div>
+  </body>
+</html>`;
+}
+
 /**
- * Create the Express middleware/router for proxying code-server.
- *
- * This must be mounted on the raw http.Server (not just Express app)
- * to support WebSocket upgrades.
+ * Create the Express middleware/router for proxying code-server and live preview.
  *
  * @param {import('http').Server} httpServer - The raw HTTP server for WebSocket upgrade handling
  * @returns {import('express').Router}
@@ -34,22 +114,32 @@ function createCodeServerProxy(httpServer) {
   const express = require('express');
   const router = express.Router();
 
+  // Active verified preview sessions cache to enable cross-origin iframe subresource routing
+  const activePreviewSessions = new Map(); // projectId -> { user, port, lastActive }
+  let lastActiveProjectId = null;
+
   /**
    * Authentication + authorization middleware for proxy routes.
-   * Verifies JWT from query param or cookie (code-server iframe can't always send headers).
+   * Verifies JWT from query param, header, or cookie (iframes cannot send headers).
    */
   async function proxyAuth(req, res, next) {
     try {
-      // Accept token from: Authorization header, query param, or cookie
-      const token =
+      let token =
         req.headers.authorization?.split(' ')[1] ||
         req.query.token ||
         req.cookies?.codecollab_token;
 
+      if (!token && req.headers.referer) {
+        try {
+          const refUrl = new URL(req.headers.referer);
+          token = refUrl.searchParams.get('token');
+        } catch {}
+      }
+
       if (!token) {
         return res.status(401).json({
           success: false,
-          message: 'Authentication required to access workspace',
+          message: 'Authentication required to access workspace or preview',
           code: 'AUTH_REQUIRED',
         });
       }
@@ -71,7 +161,7 @@ function createCodeServerProxy(httpServer) {
       req.user = user;
       next();
     } catch (err) {
-      logger.warn({ error: err.message, path: req.path }, 'Workspace proxy auth failed');
+      logger.warn({ error: err.message, path: req.path }, 'Proxy auth failed');
       return res.status(401).json({
         success: false,
         message: 'Invalid or expired token',
@@ -81,7 +171,7 @@ function createCodeServerProxy(httpServer) {
   }
 
   /**
-   * Verify the user has access to the specific project.
+   * Verify the user has access to the specific project and ensure container session.
    */
   async function verifyProjectAccess(req, res, next) {
     const { projectId } = req.params;
@@ -112,8 +202,8 @@ function createCodeServerProxy(httpServer) {
       });
     }
 
-    // Get the running container session
-    const session = codeServerService.getSession(projectId);
+    // Get or adopt the running container session
+    const session = await codeServerService.ensureSession(projectId);
     if (!session) {
       return res.status(404).json({
         success: false,
@@ -122,7 +212,6 @@ function createCodeServerProxy(httpServer) {
       });
     }
 
-    // Attach session to request for the proxy handler
     req.codeServerSession = session;
     next();
   }
@@ -139,12 +228,10 @@ function createCodeServerProxy(httpServer) {
       const session = req.codeServerSession;
       const target = `http://127.0.0.1:${session.port}`;
 
-      // Create a dynamic proxy for this specific container
       const proxy = createProxyMiddleware({
         target,
-        ws: false, // WebSocket is handled separately below
+        ws: false,
         changeOrigin: true,
-        // Strip /workspace/:projectId from the forwarded path
         pathRewrite: (pathStr) => {
           const projectId = req.params.projectId;
           const prefix = `/workspace/${projectId}`;
@@ -153,31 +240,30 @@ function createCodeServerProxy(httpServer) {
           }
           return pathStr;
         },
-        // Inject the code-server password cookie so the user doesn't need to type it
-        onProxyReq: (proxyReq) => {
-          // Set the password cookie that code-server expects
-          const existingCookies = proxyReq.getHeader('cookie') || '';
-          const passwordCookie = `key=${session.password}`;
-          if (!existingCookies.includes('key=')) {
-            proxyReq.setHeader('cookie', existingCookies ? `${existingCookies}; ${passwordCookie}` : passwordCookie);
-          }
-        },
-        // Fix response headers for iframe embedding
-        onProxyRes: (proxyRes) => {
-          // Allow embedding in an iframe from our frontend
-          delete proxyRes.headers['x-frame-options'];
-          proxyRes.headers['content-security-policy'] =
-            "frame-ancestors 'self' http://localhost:3000 http://localhost:5000";
-        },
-        onError: (err, _req, res) => {
-          logger.error({ error: err.message }, 'Proxy error');
-          if (!res.headersSent) {
-            res.status(502).json({
-              success: false,
-              message: 'Workspace proxy error: ' + err.message,
-              code: 'PROXY_ERROR',
-            });
-          }
+        on: {
+          proxyReq: (proxyReq) => {
+            const existingCookies = proxyReq.getHeader('cookie') || '';
+            const passwordCookie = `key=${session.password}`;
+            if (!existingCookies.includes('key=')) {
+              proxyReq.setHeader('cookie', existingCookies ? `${existingCookies}; ${passwordCookie}` : passwordCookie);
+            }
+          },
+          proxyRes: (proxyRes) => {
+            delete proxyRes.headers['x-frame-options'];
+            proxyRes.headers['content-security-policy'] =
+              "frame-ancestors 'self' http://localhost:3000 http://localhost:5000";
+          },
+          error: (err, _req, res) => {
+            logger.error({ error: err.message }, 'Workspace proxy error');
+            if (res && !res.headersSent) {
+              if (typeof res.writeHead === 'function') {
+                res.writeHead(502, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, message: 'Workspace proxy error: ' + err.message }));
+              } else if (typeof res.status === 'function') {
+                res.status(502).json({ success: false, message: 'Workspace proxy error: ' + err.message });
+              }
+            }
+          },
         },
       });
 
@@ -195,10 +281,52 @@ function createCodeServerProxy(httpServer) {
     proxyAuth,
     verifyProjectAccess,
     (req, res, next) => {
+      const { projectId } = req.params;
       const session = req.codeServerSession;
       const requestedPort = parseInt(req.query.port, 10) || 5173;
       const targetHostPort = session.previewPorts?.[requestedPort] || (session.port + 100);
       const target = `http://127.0.0.1:${targetHostPort}`;
+
+      // Register this active verified preview session
+      activePreviewSessions.set(projectId, {
+        user: req.user,
+        port: requestedPort,
+        lastActive: Date.now(),
+      });
+      lastActiveProjectId = projectId;
+
+      // Set cookies so subsequent subresource requests from iframe route correctly
+      const token =
+        req.headers.authorization?.split(' ')[1] ||
+        req.query.token ||
+        req.cookies?.codecollab_token;
+
+      if (token) {
+        res.cookie('codecollab_token', token, { path: '/', sameSite: 'lax', maxAge: 24 * 60 * 60 * 1000 });
+      }
+      res.cookie('codecollab_preview_project', projectId, { path: '/', sameSite: 'lax', maxAge: 24 * 60 * 60 * 1000 });
+      res.cookie('codecollab_preview_port', String(requestedPort), { path: '/', sameSite: 'lax', maxAge: 24 * 60 * 60 * 1000 });
+
+      // Ensure root URL has trailing slash so relative paths resolve correctly
+      const cleanPath = req.path;
+      if (
+        (cleanPath === `/preview/${projectId}` || cleanPath === `/api/project-runner/${projectId}/preview`) &&
+        !req.originalUrl.split('?')[0].endsWith('/')
+      ) {
+        const queryPart = req.url.includes('?') ? '?' + req.url.split('?')[1] : '';
+        return res.redirect(301, `${req.baseUrl || ''}${cleanPath}/${queryPart}`);
+      }
+
+      const sendOfflineResponse = (clientRes) => {
+        if (!clientRes || clientRes.headersSent) return;
+        const html = getOfflineHtml(requestedPort);
+        if (typeof clientRes.writeHead === 'function') {
+          clientRes.writeHead(502, { 'Content-Type': 'text/html' });
+          clientRes.end(html);
+        } else if (typeof clientRes.status === 'function') {
+          clientRes.status(502).send(html);
+        }
+      };
 
       const proxy = createProxyMiddleware({
         target,
@@ -208,40 +336,145 @@ function createCodeServerProxy(httpServer) {
           const match = pathStr.match(/(?:\/api\/project-runner\/[a-f0-9-]{36}\/preview|\/preview\/[a-f0-9-]{36})(.*)/i);
           return match ? match[1] || '/' : pathStr;
         },
-        onProxyRes: (proxyRes) => {
-          delete proxyRes.headers['x-frame-options'];
-          proxyRes.headers['content-security-policy'] =
-            "frame-ancestors 'self' http://localhost:3000 http://localhost:5000";
-        },
-        onError: (err, _req, res) => {
-          logger.warn({ error: err.message, target }, 'Preview proxy error (app server may still be starting)');
-          if (!res.headersSent) {
-            res.status(502).send(`
-              <!DOCTYPE html>
-              <html>
-                <head><title>Preview Starting</title></head>
-                <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:90vh;background:#1e1e1e;color:#f8f8f2;margin:0;">
-                  <div style="background:#252526;border:1px solid #333;padding:24px 32px;border-radius:8px;text-align:center;max-width:420px;">
-                    <div style="font-size:24px;margin-bottom:12px;">⏳</div>
-                    <h3 style="margin:0 0 8px 0;font-size:16px;color:#ffb86c;">Development Server Starting</h3>
-                    <p style="color:#6272a4;font-size:13px;line-height:1.5;margin:0 0 16px 0;">
-                      The development server is compiling or starting on port ${requestedPort}.
-                      Check the terminal output or click the button below in a few moments.
-                    </p>
-                    <button onclick="location.reload()" style="background:#bd93f9;color:#1e1e1e;border:none;padding:8px 16px;border-radius:4px;font-weight:600;cursor:pointer;font-size:12px;">
-                      Reload Preview
-                    </button>
-                  </div>
-                </body>
-              </html>
-            `);
-          }
+        on: {
+          proxyRes: (proxyRes) => {
+            delete proxyRes.headers['x-frame-options'];
+            proxyRes.headers['content-security-policy'] =
+              "frame-ancestors 'self' http://localhost:3000 http://localhost:5000";
+            proxyRes.headers['cross-origin-resource-policy'] = 'cross-origin';
+          },
+          error: (err, _req, clientRes) => {
+            logger.warn({ error: err.message, target }, 'Preview proxy error (app server may still be starting)');
+            sendOfflineResponse(clientRes);
+          },
         },
       });
 
       proxy(req, res, next);
     }
   );
+
+  /**
+   * Root-relative asset interceptor for Vite/Webpack dev servers.
+   * Vite subresources (e.g. /@vite/client, /@react-refresh, /src/main.jsx) are requested
+   * at the root level by the browser inside the iframe.
+   * This middleware resolves the originating project from cookies, referer, or active preview session.
+   */
+  router.use(async (req, res, next) => {
+    // Skip if path is handled by other explicit routers
+    if (
+      req.path.startsWith('/workspace/') ||
+      req.path.startsWith('/preview/') ||
+      req.path.startsWith('/api/') ||
+      req.path.startsWith('/socket.io/')
+    ) {
+      return next();
+    }
+
+    // Resolve projectId from referer FIRST (most reliable for iframe subresources), then query, then cookie
+    let projectId = null;
+    if (req.headers.referer) {
+      const refMatch = req.headers.referer.match(/(?:\/preview|\/api\/project-runner)\/([a-f0-9-]{36})/i);
+      if (refMatch) projectId = refMatch[1];
+    }
+    if (!projectId && req.query.projectId && /^[a-f0-9-]{36}$/i.test(req.query.projectId)) {
+      projectId = req.query.projectId;
+    }
+    if (!projectId) {
+      projectId = req.cookies?.codecollab_preview_project;
+    }
+    if (!projectId) {
+      if (activePreviewSessions.size === 1) {
+        projectId = activePreviewSessions.keys().next().value;
+      } else {
+        projectId = lastActiveProjectId;
+      }
+    }
+
+    if (!projectId) {
+      return next();
+    }
+
+    const previewSession = activePreviewSessions.get(projectId);
+
+    // Verify token from header, query, cookie, referer URL, or active session
+    let token =
+      req.headers.authorization?.split(' ')[1] ||
+      req.query.token ||
+      req.cookies?.codecollab_token;
+
+    if (!token && req.headers.referer) {
+      try {
+        const refUrl = new URL(req.headers.referer);
+        token = refUrl.searchParams.get('token');
+      } catch {}
+    }
+
+    let authenticatedUser = null;
+    if (token) {
+      try {
+        const decoded = verifyToken(token);
+        const membership = await prisma.projectMember.findUnique({
+          where: {
+            userId_projectId: {
+              userId: decoded.id,
+              projectId,
+            },
+          },
+        });
+        if (membership) authenticatedUser = decoded;
+      } catch {}
+    }
+
+    if (!authenticatedUser && previewSession) {
+      // User was already verified on initial /preview/:projectId/ page load
+      authenticatedUser = previewSession.user;
+    }
+
+    if (!authenticatedUser) {
+      return next();
+    }
+
+    try {
+      const session = await codeServerService.ensureSession(projectId);
+      if (!session) {
+        return next();
+      }
+
+      const port = parseInt(req.cookies?.codecollab_preview_port, 10) || previewSession?.port || 5173;
+      const targetHostPort = session.previewPorts?.[port] || (session.port + 100);
+      const target = `http://127.0.0.1:${targetHostPort}`;
+
+      const assetProxy = createProxyMiddleware({
+        target,
+        ws: false,
+        changeOrigin: true,
+        on: {
+          proxyRes: (proxyRes) => {
+            delete proxyRes.headers['x-frame-options'];
+            proxyRes.headers['content-security-policy'] =
+              "frame-ancestors 'self' http://localhost:3000 http://localhost:5000";
+            proxyRes.headers['cross-origin-resource-policy'] = 'cross-origin';
+          },
+          error: (err, _req, clientRes) => {
+            logger.debug({ error: err.message, path: req.path }, 'Preview asset error');
+            if (clientRes && !clientRes.headersSent) {
+              if (typeof clientRes.writeHead === 'function') {
+                clientRes.writeHead(502);
+                clientRes.end();
+              } else if (typeof clientRes.status === 'function') {
+                clientRes.status(502).end();
+              }
+            }
+          },
+        },
+      });
+
+      return assetProxy(req, res, next);
+    } catch {
+      return next();
+    }
+  });
 
   /**
    * WebSocket upgrade handler.
@@ -251,44 +484,77 @@ function createCodeServerProxy(httpServer) {
     const { createProxyServer } = require('http-proxy');
 
     httpServer.on('upgrade', async (req, socket, head) => {
-      // Check for code-server or app preview path
+      // Let Socket.IO handle /socket.io/
+      if (req.url.startsWith('/socket.io/')) return;
+
       const csMatch = req.url.match(/^\/workspace\/([a-f0-9-]{36})(\/.*)?$/i);
       const previewMatch = req.url.match(/^(?:\/api\/project-runner|\/preview)\/([a-f0-9-]{36})(?:\/preview)?(\/.*)?$/i);
 
-      if (!csMatch && !previewMatch) return; // Let Socket.IO handle other paths
+      let projectId = csMatch ? csMatch[1] : (previewMatch ? previewMatch[1] : null);
+      let isViteHmr = false;
 
-      const projectId = csMatch ? csMatch[1] : previewMatch[1];
-      const isPreview = Boolean(previewMatch);
+      // Check cookie or referer or active sessions for Vite HMR connections (which connect to / or /@vite-hmr)
+      if (!projectId) {
+        const cookies = req.headers.cookie || '';
+        const cookieMatch = cookies.match(/codecollab_preview_project=([a-f0-9-]{36})/);
+        if (cookieMatch) {
+          projectId = cookieMatch[1];
+          isViteHmr = true;
+        } else if (req.headers.referer) {
+          const refMatch = req.headers.referer.match(/(?:\/preview|\/api\/project-runner)\/([a-f0-9-]{36})/i);
+          if (refMatch) {
+            projectId = refMatch[1];
+            isViteHmr = true;
+          }
+        } else if (activePreviewSessions.has(lastActiveProjectId)) {
+          projectId = lastActiveProjectId;
+          isViteHmr = true;
+        }
+      }
+
+      if (!projectId) return;
+
+      const previewSession = activePreviewSessions.get(projectId);
 
       try {
         const url = new URL(req.url, `http://${req.headers.host}`);
-        const token = url.searchParams.get('token') || req.headers.authorization?.split(' ')[1];
+        let token =
+          url.searchParams.get('token') ||
+          req.headers.authorization?.split(' ')[1] ||
+          req.headers.cookie?.match(/codecollab_token=([^;]+)/)?.[1]?.trim();
 
-        if (!token) {
+        if (!token && req.headers.referer) {
+          try {
+            const refUrl = new URL(req.headers.referer);
+            token = refUrl.searchParams.get('token');
+          } catch {}
+        }
+
+        let authorized = false;
+        if (token) {
+          const decoded = verifyToken(token);
+          const membership = await prisma.projectMember.findUnique({
+            where: {
+              userId_projectId: {
+                userId: decoded.id,
+                projectId,
+              },
+            },
+          });
+          if (membership) authorized = true;
+        }
+
+        if (!authorized && isViteHmr && previewSession) {
+          authorized = true;
+        }
+
+        if (!authorized) {
           socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
           socket.destroy();
           return;
         }
 
-        const decoded = verifyToken(token);
-
-        // Check project membership
-        const membership = await prisma.projectMember.findUnique({
-          where: {
-            userId_projectId: {
-              userId: decoded.id,
-              projectId,
-            },
-          },
-        });
-
-        if (!membership) {
-          socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
-          socket.destroy();
-          return;
-        }
-
-        const session = codeServerService.getSession(projectId);
+        const session = await codeServerService.ensureSession(projectId);
         if (!session) {
           socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
           socket.destroy();
@@ -296,10 +562,15 @@ function createCodeServerProxy(httpServer) {
         }
 
         let target;
-        if (isPreview) {
-          const previewPort = session.previewPorts?.[5173] || (session.port + 100);
+        if (isViteHmr || previewMatch) {
+          const cookies = req.headers.cookie || '';
+          const portMatch = cookies.match(/codecollab_preview_port=(\d+)/);
+          const port = portMatch ? parseInt(portMatch[1], 10) : (previewSession?.port || 5173);
+          const previewPort = session.previewPorts?.[port] || (session.port + 100);
           target = `ws://127.0.0.1:${previewPort}`;
-          req.url = req.url.replace(/^(?:\/api\/project-runner|\/preview)\/[a-f0-9-]{36}(?:\/preview)?/i, '') || '/';
+          if (previewMatch) {
+            req.url = req.url.replace(/^(?:\/api\/project-runner|\/preview)\/[a-f0-9-]{36}(?:\/preview)?/i, '') || '/';
+          }
         } else {
           target = `ws://127.0.0.1:${session.port}`;
           const prefix = `/workspace/${projectId}`;
@@ -318,7 +589,7 @@ function createCodeServerProxy(httpServer) {
         wsProxy.ws(req, socket, head);
 
         wsProxy.on('error', (err) => {
-          logger.warn({ error: err.message, projectId, isPreview }, 'WebSocket proxy error');
+          logger.warn({ error: err.message, projectId, isViteHmr }, 'WebSocket proxy error');
           socket.destroy();
         });
       } catch (err) {

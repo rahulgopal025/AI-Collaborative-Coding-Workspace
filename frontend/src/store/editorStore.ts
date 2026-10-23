@@ -381,7 +381,7 @@ interface EditorState {
   rightPanelWidth: number;
   bottomPanelHeight: number;
   activeRightPanel: 'chat' | 'ai' | null;
-  activeBottomPanel: 'terminal' | 'output' | 'ai' | null;
+  activeBottomPanel: 'terminal' | 'output' | 'ai' | 'preview' | null;
   activeActivityBar: 'files' | 'search' | 'git' | 'extensions' | 'settings' | null;
   pendingTerminalCommand: string | null;
   

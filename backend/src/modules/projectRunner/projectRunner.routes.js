@@ -8,6 +8,7 @@
  *   POST /api/project-runner/:projectId/start     — Start code-server for a project
  *   POST /api/project-runner/:projectId/stop      — Stop code-server for a project
  *   GET  /api/project-runner/:projectId/info      — Get running container info
+ *   GET  /api/project-runner/:projectId/node-modules — Check node_modules presence
  */
 
 const { Router } = require('express');
@@ -167,5 +168,3 @@ router.get('/:projectId/node-modules', async (req, res, next) => {
 });
 
 module.exports = router;
-
-

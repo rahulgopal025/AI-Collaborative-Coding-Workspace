@@ -1,4 +1,3 @@
-import React from 'react';
 import { 
   Files, 
   Search, 
@@ -7,7 +6,8 @@ import {
   Settings, 
   MessageSquare, 
   Terminal,
-  SquareTerminal
+  SquareTerminal,
+  Globe
 } from 'lucide-react';
 import { useEditorStore } from '@/store/editorStore';
 import { cn } from '@/lib/utils';
@@ -37,6 +37,7 @@ export const ActivityBar: React.FC<ActivityBarProps> = ({ className }) => {
     { id: 'chat' as const, icon: MessageSquare, label: 'Chat', panel: 'chat' as const, panelType: 'right' as const },
     { id: 'terminal' as const, icon: Terminal, label: 'Terminal', panel: 'terminal' as const, panelType: 'bottom' as const },
     { id: 'ai-console' as const, icon: SquareTerminal, label: 'AI Console', panel: 'ai' as const, panelType: 'bottom' as const },
+    { id: 'preview' as const, icon: Globe, label: 'Live Preview', panel: 'preview' as const, panelType: 'bottom' as const },
     { id: 'settings' as const, icon: Settings, label: 'Settings', panelType: 'activity' as const },
   ];
 
@@ -69,7 +70,7 @@ export const ActivityBar: React.FC<ActivityBarProps> = ({ className }) => {
             key={item.id}
             onClick={() => {
               if (item.panelType === 'bottom' && item.panel) {
-                const bottomPanel = item.panel as 'terminal' | 'ai';
+                const bottomPanel = item.panel as 'terminal' | 'ai' | 'preview';
                 setActiveBottomPanel(activeBottomPanel === bottomPanel ? null : bottomPanel);
               } else if (item.panelType === 'right' && item.panel) {
                 const rightPanel = item.panel as 'chat' | 'ai';

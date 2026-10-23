@@ -349,7 +349,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
           )}
           {sessions.map((session) => (
             <XtermView
-              key={session.id}
+              key={`${projectId}-${session.id}`}
               sessionId={session.id}
               isActive={activeSessionId === session.id}
               initSession={initSession}

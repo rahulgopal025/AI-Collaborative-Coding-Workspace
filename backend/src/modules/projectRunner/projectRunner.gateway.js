@@ -11,6 +11,10 @@
  *     - runner:kill-process   { projectId? }    — Abort the current exec
  *     - runner:destroy-container { projectId? } — Stop & remove the container
  *     - runner:check-docker                     — Check Docker availability
+ *     - terminal:init { projectId, sessionId, cols, rows } — Start interactive PTY
+ *     - terminal:data { sessionId, data }       — Send stdin to PTY
+ *     - terminal:resize { sessionId, cols, rows } — Resize PTY window
+ *     - terminal:kill { sessionId }             — Terminate PTY session
  *
  *   Server → Client:
  *     - runner:docker-status   { available, version?, error? }
@@ -22,6 +26,10 @@
  *     - runner:error           { message, code }
  *     - runner:files-synced    { projectId, files }
  *     - runner:container-destroyed
+ *     - terminal:ready         { sessionId }
+ *     - terminal:data          { sessionId, data }
+ *     - terminal:exit          { sessionId, code }
+ *     - runner:node-modules-status { projectId, hasNodeModules }
  */
 
 const { verifyToken } = require('../../common/utils/jwt');
@@ -77,6 +85,16 @@ function setupProjectRunnerGateway(io) {
 
       socket.userId = user.id;
       socket.userName = user.name;
+
+      const handshakeProjectId =
+        socket.handshake.query?.projectId ||
+        socket.handshake.auth?.projectId;
+
+      if (handshakeProjectId && /^[a-f0-9-]{36}$/i.test(handshakeProjectId)) {
+        await permissionService.can(user.id, handshakeProjectId, 'COLLABORATE');
+        socket.projectId = handshakeProjectId;
+      }
+
       next();
     } catch (error) {
       logger.warn({ error: error.message }, 'Project runner socket auth failed');
@@ -87,9 +105,13 @@ function setupProjectRunnerGateway(io) {
   // ─── Connection Handler ────────────────────────────────
   namespace.on('connection', (socket) => {
     logger.debug(
-      { socketId: socket.id, userId: socket.userId },
+      { socketId: socket.id, userId: socket.userId, projectId: socket.projectId },
       'Project runner socket connected'
     );
+
+    if (socket.projectId) {
+      socket.join(`project:${socket.projectId}`);
+    }
 
     // ─── Check Docker availability ─────────────────────
     socket.on('runner:check-docker', async () => {
@@ -102,7 +124,7 @@ function setupProjectRunnerGateway(io) {
     });
 
     // ─── Start / Join Container ────────────────────────
-    socket.on('runner:start-container', async ({ projectId }) => {
+    socket.on('runner:start-container', async ({ projectId } = {}) => {
       try {
         if (!projectId) {
           return emitError(socket, 'Project ID is required', 'RUNNER_MISSING_PROJECT');
@@ -170,7 +192,7 @@ function setupProjectRunnerGateway(io) {
 
     // ─── Execute Shell Command ─────────────────────────
     socket.on('runner:exec-command', async ({ command, projectId }) => {
-      const targetProjectId = projectId || socket.projectId || codeServerService.findProjectBySocket(socket.id);
+      const targetProjectId = projectId || socket.projectId;
       if (!targetProjectId) {
         return emitError(socket, 'No project container associated with this session', 'RUNNER_NO_PROJECT');
       }
@@ -338,6 +360,10 @@ function setupProjectRunnerGateway(io) {
         }
 
         await permissionService.can(socket.userId, targetProjectId, 'COLLABORATE');
+
+        if (socket.projectId && socket.projectId !== targetProjectId) {
+          socket.leave(`project:${socket.projectId}`);
+        }
         socket.projectId = targetProjectId;
         socket.join(`project:${targetProjectId}`);
 
@@ -353,15 +379,15 @@ function setupProjectRunnerGateway(io) {
         // Start filesystem watcher
         fileMaterializer.startWatcher(targetProjectId, io);
 
-        // Ensure container is running
+        // Ensure container is running and verified for this exact project
         let session = codeServerService.getSession(targetProjectId);
         if (!session) {
           socket.emit('terminal:data', {
             sessionId,
             data: '\r\n\x1b[34m[Starting Docker project container...]\x1b[0m\r\n',
           });
-          await codeServerService.startContainer(targetProjectId, projectDir, socket.id);
         }
+        await codeServerService.startContainer(targetProjectId, projectDir, socket.id);
 
         const sessionKey = `${socket.id}:${sessionId}`;
         const existing = activeTerminalSessions.get(sessionKey);
