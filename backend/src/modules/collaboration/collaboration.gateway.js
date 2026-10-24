@@ -26,7 +26,7 @@ function setupCollaborationGateway(io) {
       const decoded = verifyToken(token);
       const user = await prisma.user.findUnique({
         where: { id: decoded.id },
-        select: { id: true, name: true },
+        select: { id: true, name: true, avatarUrl: true },
       });
 
       if (!user) {
@@ -34,7 +34,8 @@ function setupCollaborationGateway(io) {
       }
 
       socket.userId = user.id;
-      socket.userName = user.name;
+      socket.userName = user.name || 'User';
+      socket.userAvatar = user.avatarUrl || null;
       next();
     } catch (error) {
       logger.warn({ error: error.message }, 'Socket authentication failed');

@@ -59,6 +59,7 @@ router.delete(
 
 // Mount sub-routers
 router.use('/:projectId/members', memberRoutes);
+router.use('/:projectId/collaborators', memberRoutes);
 router.use('/:projectId/messages', chatRoutes);
 router.use('/:projectId/activities', activityRoutes);
 router.use('/:projectId/files', projectFileRouter);

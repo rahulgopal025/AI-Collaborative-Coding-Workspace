@@ -18,7 +18,7 @@ async function create(data) {
   });
 }
 
-async function findByProjectId(projectId, { page = 1, limit = 20 }) {
+async function findByProjectId(projectId, { page = 1, limit = 50 } = {}) {
   const skip = (page - 1) * limit;
 
   const [messages, total] = await Promise.all([
@@ -34,7 +34,8 @@ async function findByProjectId(projectId, { page = 1, limit = 20 }) {
     prisma.message.count({ where: { projectId } }),
   ]);
 
-  return { messages, total };
+  // Return in chronological order (oldest to newest) for chat stream rendering
+  return { messages: messages.reverse(), total };
 }
 
 async function findById(id) {
@@ -50,3 +51,5 @@ async function remove(id) {
 }
 
 module.exports = { create, findByProjectId, findById, remove };
+
+

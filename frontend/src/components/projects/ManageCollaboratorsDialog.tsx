@@ -25,6 +25,18 @@ import { z } from "zod";
 
 const emailSchema = z.string().trim().email("Please enter a valid email address");
 
+interface ApiMember {
+  id: string;
+  userId: string;
+  role: string;
+  user?: {
+    id: string;
+    name?: string;
+    email?: string;
+    avatarUrl?: string | null;
+  };
+}
+
 interface Collaborator {
   id: string;
   user_id: string;
@@ -58,8 +70,17 @@ export const ManageCollaboratorsDialog: React.FC<ManageCollaboratorsDialogProps>
   const fetchCollaborators = useCallback(async () => {
     setLoadingList(true);
     try {
-      const data = await apiRequest<Collaborator[]>(`/projects/${projectId}/collaborators`);
-      setCollaborators(data || []);
+      const data = await apiRequest<ApiMember[]>(`/projects/${projectId}/collaborators`);
+      const mapped: Collaborator[] = (data || [])
+        .filter((m) => m.role !== "OWNER")
+        .map((m) => ({
+          id: m.id,
+          user_id: m.userId || m.user?.id || m.id,
+          role: m.role.toLowerCase(),
+          display_name: m.user?.name || m.user?.email || "Unknown",
+          color: 1 + ((m.userId || m.id).charCodeAt(0) % 6),
+        }));
+      setCollaborators(mapped);
     } catch {
       toast.error("Failed to load collaborators");
     } finally {
@@ -99,14 +120,14 @@ export const ManageCollaboratorsDialog: React.FC<ManageCollaboratorsDialogProps>
     }
   };
 
-  const handleRemove = async (collaboratorId: string) => {
-    setRemovingId(collaboratorId);
+  const handleRemove = async (collaboratorUserId: string) => {
+    setRemovingId(collaboratorUserId);
     try {
-      await apiRequest(`/projects/${projectId}/collaborators/${collaboratorId}`, {
+      await apiRequest(`/projects/${projectId}/collaborators/${collaboratorUserId}`, {
         method: "DELETE",
       });
 
-      setCollaborators((prev) => prev.filter((collaborator) => collaborator.id !== collaboratorId));
+      setCollaborators((prev) => prev.filter((c) => c.user_id !== collaboratorUserId));
       toast.success("Collaborator removed");
     } catch {
       toast.error("Failed to remove collaborator");
@@ -208,10 +229,10 @@ export const ManageCollaboratorsDialog: React.FC<ManageCollaboratorsDialogProps>
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                      onClick={() => handleRemove(collaborator.id)}
-                      disabled={removingId === collaborator.id}
+                      onClick={() => handleRemove(collaborator.user_id)}
+                      disabled={removingId === collaborator.user_id}
                     >
-                      {removingId === collaborator.id ? (
+                      {removingId === collaborator.user_id ? (
                         <Loader2 className="w-3 h-3 animate-spin" />
                       ) : (
                         <X className="w-3 h-3" />

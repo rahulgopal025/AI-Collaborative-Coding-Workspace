@@ -6,25 +6,33 @@ const logger = require('../../../common/utils/logger');
 
 function registerConnectionEvents(socket, io) {
   // Setup presence on connect
-  collabService.trackConnection(socket.id, socket.userId, socket.userName);
+  collabService.trackConnection(socket.id, socket.userId, socket.userName, socket.userAvatar);
 
   socket.on('disconnect', () => {
     const presence = collabService.getPresence(socket.id);
     if (presence) {
-      const { projectId, activeFileId } = presence;
+      const { projectId, activeFileId, userId } = presence;
 
       // Clean up document clients if they were editing
       if (activeFileId) {
         collabService.documentManager.removeClient(activeFileId, socket.id);
       }
 
+      collabService.removeConnection(socket.id);
+
+      // Check if user still has other connections in this project
+      const remaining = projectId ? collabService.getUserConnectionsInProject(projectId, userId) : [];
+
       // Broadcast leave to project if they were in one
       if (projectId) {
-        io.to(`project:${projectId}`).emit('presence:leave', { socketId: socket.id });
+        io.to(`project:${projectId}`).emit('presence:leave', {
+          socketId: socket.id,
+          userId,
+          hasRemainingConnections: remaining.length > 0,
+        });
       }
 
-      collabService.removeConnection(socket.id);
-      logger.debug({ socketId: socket.id }, 'Client disconnected');
+      logger.debug({ socketId: socket.id, userId }, 'Client disconnected');
     }
   });
 }

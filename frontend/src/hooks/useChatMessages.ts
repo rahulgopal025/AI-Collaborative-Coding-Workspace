@@ -3,7 +3,6 @@ import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import { ChatMessage } from "@/types/editor";
 import { ChatMessageRow, resolveCurrentChatUser, toChatMessage } from "@/lib/chat";
-// Ably is removed
 
 export type { ChatMessageRow } from "@/lib/chat";
 
@@ -11,15 +10,18 @@ export const useChatMessages = (projectId: string, socket?: any) => {
   const { user, profile } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const currentChatUser = useMemo(
     () =>
       resolveCurrentChatUser({
         userId: user?.id,
         profileUserId: profile?.user_id,
-        displayName: profile?.display_name,
+        displayName: user?.name || profile?.display_name,
         color: profile?.color,
       }),
-    [profile?.color, profile?.display_name, profile?.user_id, user?.id]
+    [profile?.color, profile?.display_name, profile?.user_id, user?.id, user?.name]
   );
 
   const fetchMessages = useCallback(
@@ -32,12 +34,13 @@ export const useChatMessages = (projectId: string, socket?: any) => {
 
       try {
         if (!silent) setLoading(true);
-        // Changed to correct endpoint
+        setError(null);
         const data = await apiRequest<ChatMessageRow[]>(`/projects/${projectId}/messages`);
         setMessages((data || []).map((row) => toChatMessage(row, currentChatUser)));
-      } catch (error) {
+      } catch (err: any) {
         if (!silent) {
-          console.error("Failed to load chat messages:", error);
+          console.error("Failed to load chat messages:", err);
+          setError(err.message || "Failed to load chat messages");
         }
       } finally {
         if (!silent) setLoading(false);
@@ -56,7 +59,7 @@ export const useChatMessages = (projectId: string, socket?: any) => {
     // Polling as fallback if Socket is not available
     const interval = window.setInterval(() => {
       fetchMessages(true);
-    }, 10000); 
+    }, 15000);
 
     return () => window.clearInterval(interval);
   }, [projectId, fetchMessages]);
@@ -72,29 +75,36 @@ export const useChatMessages = (projectId: string, socket?: any) => {
       });
     };
 
-    socket.on('message:new', handleNewMessage);
-    
+    socket.on("message:new", handleNewMessage);
+
     return () => {
-      socket.off('message:new', handleNewMessage);
+      socket.off("message:new", handleNewMessage);
     };
   }, [socket, projectId, currentChatUser]);
 
   const sendMessage = useCallback(
     async (content: string) => {
-      if (!currentChatUser.id || !projectId) return;
+      const trimmed = content.trim();
+      if (!trimmed || !projectId) return;
+
+      setIsSending(true);
+      setError(null);
 
       try {
         if (socket && socket.connected) {
-          socket.emit('message:send', { projectId, content });
-          // Note: we wait for the message:new event to append it to the list
+          socket.emit("message:send", { projectId, content: trimmed });
         } else {
-          console.warn("Socket not connected, cannot send message.");
+          throw new Error("Chat connection is offline. Please try again.");
         }
-      } catch (error) {
-        console.error("Failed to send message:", error);
+      } catch (err: any) {
+        console.error("Failed to send message:", err);
+        setError(err.message || "Failed to send message");
+        throw err;
+      } finally {
+        setIsSending(false);
       }
     },
-    [currentChatUser.id, projectId, socket]
+    [projectId, socket]
   );
 
   const toggleReaction = useCallback(
@@ -105,5 +115,5 @@ export const useChatMessages = (projectId: string, socket?: any) => {
     [currentChatUser.id, projectId]
   );
 
-  return { messages, loading, sendMessage, toggleReaction };
+  return { messages, loading, isSending, error, sendMessage, toggleReaction, refetch: fetchMessages };
 };

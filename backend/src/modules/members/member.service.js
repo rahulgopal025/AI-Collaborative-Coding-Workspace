@@ -15,14 +15,26 @@ async function getProjectMembers(projectId) {
 }
 
 async function addMember(projectId, data, addedByUserId) {
-  // Find user by email
-  const userToAdd = await prisma.user.findUnique({
-    where: { email: data.email },
-    select: { id: true, name: true, email: true },
-  });
-
-  if (!userToAdd) {
-    throw AppError.notFound('User with this email not found', ERROR_CODES.USER_NOT_FOUND);
+  // Find user by email or userId
+  let userToAdd;
+  if (data.email) {
+    userToAdd = await prisma.user.findUnique({
+      where: { email: data.email },
+      select: { id: true, name: true, email: true },
+    });
+    if (!userToAdd) {
+      throw AppError.notFound('No user found with this email', ERROR_CODES.USER_NOT_FOUND);
+    }
+  } else if (data.userId) {
+    userToAdd = await prisma.user.findUnique({
+      where: { id: data.userId },
+      select: { id: true, name: true, email: true },
+    });
+    if (!userToAdd) {
+      throw AppError.notFound('User not found', ERROR_CODES.USER_NOT_FOUND);
+    }
+  } else {
+    throw AppError.badRequest('Either email or userId must be provided');
   }
 
   // Check if already a member

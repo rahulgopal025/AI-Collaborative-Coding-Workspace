@@ -21,9 +21,15 @@ function registerRoomEvents(socket, io) {
 
   socket.on('project:leave', ({ projectId }) => {
     const presence = collabService.getPresence(socket.id);
+    const userId = presence?.userId || socket.userId;
     collabService.leaveProjectRoom(socket, projectId);
     collabService.updatePresence(socket.id, { projectId: null, activeFileId: null });
-    socket.to(`project:${projectId}`).emit('presence:leave', { socketId: socket.id, userId: presence?.userId });
+    const remaining = collabService.getUserConnectionsInProject(projectId, userId);
+    socket.to(`project:${projectId}`).emit('presence:leave', {
+      socketId: socket.id,
+      userId,
+      hasRemainingConnections: remaining.length > 0,
+    });
   });
 
   socket.on('file:join', async ({ fileId, projectId }) => {

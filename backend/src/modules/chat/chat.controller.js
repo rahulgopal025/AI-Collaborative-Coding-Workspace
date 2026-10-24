@@ -9,7 +9,7 @@ async function list(req, res, next) {
   try {
     const { projectId } = req.params;
     const page = parseInt(req.query.page) || 1;
-    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const limit = Math.min(parseInt(req.query.limit) || 50, 100);
 
     const { messages, total } = await chatService.getProjectMessages(
       projectId,

@@ -184,7 +184,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
         .filter((participant) => participant.user_id !== user?.id)
         .map((participant) => ({
           id: participant.user_id,
-          name: participant.profile?.display_name || 'Unknown',
+          name: participant.profile?.display_name || 'User',
           email: '',
           color: participant.profile?.color || 1,
           isOnline: participant.is_online,

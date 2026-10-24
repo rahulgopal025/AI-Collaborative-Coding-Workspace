@@ -84,48 +84,94 @@ export const useCollaborationSession = ({
     });
 
     socket.on('presence:list', (snapshot: any[]) => {
-      setParticipants(snapshot.map(p => ({
-        id: p.userId,
-        user_id: p.userId,
-        project_id: projectId,
-        file_path: p.activeFileId,
-        cursor_line: null,
-        cursor_column: null,
-        is_online: true,
-        last_seen: new Date().toISOString(),
-        profile: {
-          display_name: p.userId, // Backend might not send profile yet
-          avatar_url: null,
-          color: 1 + (p.userId.charCodeAt(0) % 6)
+      if (!Array.isArray(snapshot)) return;
+
+      // Deduplicate by userId
+      const uniqueUsers = new Map<string, any>();
+      for (const p of snapshot) {
+        if (!p || !p.userId) continue;
+        if (!uniqueUsers.has(p.userId)) {
+          uniqueUsers.set(p.userId, p);
         }
-      })));
+      }
+
+      setParticipants(
+        Array.from(uniqueUsers.values()).map((p) => {
+          const isSelf = p.userId === user?.id;
+          const resolvedName = p.name || p.displayName || (isSelf ? (user?.name || 'You') : 'User');
+          return {
+            id: p.userId,
+            user_id: p.userId,
+            project_id: projectId,
+            file_path: p.activeFileId || null,
+            cursor_line: null,
+            cursor_column: null,
+            is_online: true,
+            last_seen: new Date().toISOString(),
+            profile: {
+              display_name: resolvedName,
+              avatar_url: p.avatarUrl || null,
+              color: 1 + ((p.userId || '').charCodeAt(0) % 6),
+            },
+          };
+        })
+      );
     });
 
     socket.on('presence:join', (p: any) => {
-      setParticipants(prev => {
-        if (prev.find(x => x.user_id === p.userId)) return prev;
-        return [...prev, {
+      if (!p || !p.userId) return;
+      const isSelf = p.userId === user?.id;
+      const resolvedName = p.name || p.displayName || (isSelf ? (user?.name || 'You') : 'User');
+
+      setParticipants((prev) => {
+        const existingIndex = prev.findIndex((x) => x.user_id === p.userId);
+        const updated: PresenceParticipant = {
           id: p.userId,
           user_id: p.userId,
           project_id: projectId,
-          file_path: p.activeFileId,
+          file_path: p.activeFileId || null,
           cursor_line: null,
           cursor_column: null,
           is_online: true,
           last_seen: new Date().toISOString(),
-          profile: { display_name: p.userId, avatar_url: null, color: 1 + (p.userId.charCodeAt(0) % 6) }
-        }];
+          profile: {
+            display_name: resolvedName,
+            avatar_url: p.avatarUrl || null,
+            color: 1 + ((p.userId || '').charCodeAt(0) % 6),
+          },
+        };
+
+        if (existingIndex >= 0) {
+          const next = [...prev];
+          next[existingIndex] = updated;
+          return next;
+        }
+        return [...prev, updated];
       });
     });
 
-    socket.on('presence:leave', (payload: { socketId: string, userId?: string }) => {
-      if (payload.userId) {
-        setParticipants(prev => prev.filter(p => p.user_id !== payload.userId));
+    socket.on('presence:leave', (payload: { socketId: string; userId?: string; hasRemainingConnections?: boolean }) => {
+      if (payload?.userId) {
+        if (!payload.hasRemainingConnections) {
+          setParticipants((prev) => prev.filter((p) => p.user_id !== payload.userId));
+        }
       }
     });
 
     socket.on('presence:update', (payload: any) => {
-      // update file path for user
+      if (!payload) return;
+      setParticipants((prev) =>
+        prev.map((p) => {
+          if (p.user_id === payload.userId) {
+            return {
+              ...p,
+              file_path: payload.activeFileId !== undefined ? payload.activeFileId : p.file_path,
+              cursor_line: payload.cursor_line !== undefined ? payload.cursor_line : p.cursor_line,
+            };
+          }
+          return p;
+        })
+      );
     });
 
     return () => {
@@ -226,3 +272,4 @@ export const useCollaborationSession = ({
     socket: socketRef.current
   };
 };
+
