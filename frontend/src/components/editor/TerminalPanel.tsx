@@ -27,11 +27,13 @@ interface TerminalPanelProps {
   fileName?: string;
   cwd?: string;
   projectId?: string;
+  isVisible?: boolean;
 }
 
 interface XtermViewProps {
   sessionId: string;
   isActive: boolean;
+  isVisible?: boolean;
   initSession: (sessionId: string, cols?: number, rows?: number) => void;
   sendData: (sessionId: string, data: string) => void;
   resize: (sessionId: string, cols: number, rows: number) => void;
@@ -41,6 +43,7 @@ interface XtermViewProps {
 const XtermView: React.FC<XtermViewProps> = ({
   sessionId,
   isActive,
+  isVisible = true,
   initSession,
   sendData,
   resize,
@@ -133,17 +136,19 @@ const XtermView: React.FC<XtermViewProps> = ({
     };
   }, [sessionId, initSession, sendData, resize, registerDataListener]);
 
-  // When active tab changes, re-fit and focus
+  // When active tab changes or panel visibility changes, re-fit and focus
   useEffect(() => {
-    if (isActive && fitAddonRef.current && termRef.current) {
+    if (isActive && isVisible && fitAddonRef.current && termRef.current) {
       setTimeout(() => {
-        try {
-          fitAddonRef.current?.fit();
-          termRef.current?.focus();
-        } catch {}
+        if (containerRef.current && containerRef.current.clientWidth > 0) {
+          try {
+            fitAddonRef.current?.fit();
+            termRef.current?.focus();
+          } catch {}
+        }
       }, 50);
     }
-  }, [isActive]);
+  }, [isActive, isVisible]);
 
   return (
     <div
@@ -166,6 +171,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   fileName,
   cwd = '/workspace',
   projectId: propProjectId,
+  isVisible = true,
 }) => {
   const params = useParams<{ projectId: string }>();
   const projectId = propProjectId || params.projectId || '';
@@ -352,6 +358,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
               key={`${projectId}-${session.id}`}
               sessionId={session.id}
               isActive={activeSessionId === session.id}
+              isVisible={isVisible}
               initSession={initSession}
               sendData={sendData}
               resize={resize}

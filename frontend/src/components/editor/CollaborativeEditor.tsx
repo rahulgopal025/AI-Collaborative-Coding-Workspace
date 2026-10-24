@@ -626,8 +626,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
 
               </div>
 
-              {/* Bottom panel — only inside editor column, right panel unaffected */}
-              {activeBottomPanel && (
+              {/* Bottom panel — always mounted, CSS-hidden when inactive to preserve terminal state */}
+              <div className={cn(!activeBottomPanel && 'hidden')}>
                 <BottomPanel height={bottomPanelHeight} onResize={setBottomPanelHeight}>
                   <div className="flex flex-col h-full">
                     <div className="flex items-center border-b border-[#333] shrink-0" style={{ backgroundColor: '#252526' }}>
@@ -674,8 +674,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
                         ✕
                       </button>
                     </div>
-                    <div className="flex-1 overflow-hidden">
-                      {activeBottomPanel === 'terminal' && (
+                    <div className="flex-1 overflow-hidden relative">
+                      <div className={cn('h-full w-full', activeBottomPanel !== 'terminal' && 'hidden')}>
                         <TerminalPanel
                           key={projectId}
                           className="h-full"
@@ -684,27 +684,28 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
                           language={currentLanguage}
                           filePath={activeTab?.path}
                           fileName={activeTab?.name}
+                          isVisible={activeBottomPanel === 'terminal'}
                         />
-                      )}
-                      {activeBottomPanel === 'ai' && (
+                      </div>
+                      <div className={cn('h-full w-full', activeBottomPanel !== 'ai' && 'hidden')}>
                         <AIConsole
                           className="h-full"
                           projectId={projectId}
                           onFilesChanged={() => void refetch(true)}
                         />
-                      )}
-                      {activeBottomPanel === 'preview' && (
+                      </div>
+                      <div className={cn('h-full w-full', activeBottomPanel !== 'preview' && 'hidden')}>
                         <HTMLPreview
                           key={projectId}
                           projectId={projectId}
                           code={currentCode}
                           className="h-full"
                         />
-                      )}
+                      </div>
                     </div>
                   </div>
                 </BottomPanel>
-              )}
+              </div>
             </div>
 
             {/* Right panel — always full height, never affected by bottom panel */}
