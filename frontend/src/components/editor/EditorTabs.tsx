@@ -9,9 +9,10 @@ import { isExecutableLanguage } from '@/lib/sandboxExecutor';
 
 interface EditorTabsProps {
   className?: string;
+  readOnly?: boolean;
 }
 
-export const EditorTabs: React.FC<EditorTabsProps> = ({ className }) => {
+export const EditorTabs: React.FC<EditorTabsProps> = ({ className, readOnly }) => {
   const {
     tabs, activeTabId, setActiveTab, closeTab,
     htmlPreviewLayout, setHtmlPreviewLayout,
@@ -46,7 +47,9 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({ className }) => {
   };
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
-  const isHtmlPreviewable = Boolean(activeTab);
+  const isHtmlPreviewable = activeTab
+    ? ['html', 'css'].includes(activeTab.language.toLowerCase())
+    : false;
   const isExecutable = activeTab && isExecutableLanguage(activeTab.language);
   const hasActions = Boolean(activeTab);
   const hasOverflow = canScrollLeft || canScrollRight;
@@ -161,20 +164,19 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({ className }) => {
           )}
 
           {isExecutable && !isHtmlPreviewable && (
-            <>
-              <RunButton />
-              <button
-                onClick={() => setActiveBottomPanel('terminal')}
-                title="Open Terminal"
-                className={cn(
-                  'flex items-center justify-center w-7 h-7 rounded-sm border border-border text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors',
-                  activeBottomPanel === 'terminal' && 'ring-1 ring-primary text-primary'
-                )}
-              >
-                <Terminal className="w-3.5 h-3.5" />
-              </button>
-            </>
+            <RunButton readOnly={readOnly} />
           )}
+
+          <button
+            onClick={() => setActiveBottomPanel('terminal')}
+            title={readOnly ? "Terminal (Read-only for Viewers)" : "Open Terminal"}
+            className={cn(
+              'flex items-center justify-center w-7 h-7 rounded-sm border border-border text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors',
+              activeBottomPanel === 'terminal' && 'ring-1 ring-primary text-primary'
+            )}
+          >
+            <Terminal className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
     </div>

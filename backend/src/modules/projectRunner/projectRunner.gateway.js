@@ -51,6 +51,7 @@ const activeProjectExecs = new Map();
  * Active interactive PTY terminal sessions, keyed by `${socketId}:${sessionId}`.
  */
 const activeTerminalSessions = new Map();
+let runnerNamespace = null;
 
 /**
  * Set up the /project-runner Socket.IO namespace.
@@ -60,6 +61,7 @@ const activeTerminalSessions = new Map();
  */
 function setupProjectRunnerGateway(io) {
   const namespace = io.of('/project-runner');
+  runnerNamespace = namespace;
 
   // ─── Authentication Middleware ─────────────────────────
   namespace.use(async (socket, next) => {
@@ -198,6 +200,8 @@ function setupProjectRunnerGateway(io) {
       }
 
       try {
+        await permissionService.can(socket.userId, targetProjectId, 'COLLABORATE');
+
         // Validate command against allowlist
         const { sanitized, description } = validateCommand(command);
 
@@ -273,6 +277,8 @@ function setupProjectRunnerGateway(io) {
       }
 
       try {
+        await permissionService.can(socket.userId, targetProjectId, 'COLLABORATE');
+
         const projectDir = fileMaterializer.getProjectDir(targetProjectId);
         const pkgJsonPath = path.join(projectDir, 'package.json');
 
@@ -427,10 +433,24 @@ function setupProjectRunnerGateway(io) {
       }
     });
 
-    socket.on('terminal:data', ({ sessionId = 'default', data } = {}) => {
+    socket.on('terminal:data', async ({ sessionId = 'default', data } = {}) => {
       const sessionKey = `${socket.id}:${sessionId}`;
       const term = activeTerminalSessions.get(sessionKey);
       if (term && data) {
+        if (socket.projectId) {
+          try {
+            await permissionService.can(socket.userId, socket.projectId, 'COLLABORATE');
+          } catch (err) {
+            term.kill();
+            activeTerminalSessions.delete(sessionKey);
+            socket.emit('terminal:data', {
+              sessionId,
+              data: '\r\n\x1b[31m[Viewer access: Terminal input is disabled]\x1b[0m\r\n',
+            });
+            socket.emit('terminal:exit', { sessionId, code: 1 });
+            return;
+          }
+        }
         term.write(data);
       }
     });
@@ -502,4 +522,36 @@ function emitError(socket, message, code) {
   });
 }
 
-module.exports = { setupProjectRunnerGateway };
+/**
+ * Revoke terminal sessions for a specific user in a project (e.g. When demoted to Viewer).
+ */
+function revokeUserTerminalSessions(projectId, userId) {
+  try {
+    if (runnerNamespace) {
+      for (const [socketId, socket] of runnerNamespace.sockets) {
+        if (socket.userId === userId && (!projectId || socket.projectId === projectId)) {
+          for (const [sessionKey, term] of activeTerminalSessions.entries()) {
+            if (sessionKey.startsWith(`${socketId}:`)) {
+              const sessionId = sessionKey.split(':')[1] || 'default';
+              socket.emit('terminal:data', {
+                sessionId,
+                data: '\r\n\x1b[31m[Permission revoked: Role changed to Viewer. Terminal access terminated.]\x1b[0m\r\n',
+              });
+              socket.emit('terminal:exit', { sessionId, code: 1 });
+              term.kill();
+              activeTerminalSessions.delete(sessionKey);
+            }
+          }
+          socket.emit('runner:error', {
+            message: 'Viewer access: terminal and execution permissions revoked',
+            code: 'INSUFFICIENT_PERMISSIONS',
+          });
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn({ error: err.message, projectId, userId }, 'Error revoking user terminal sessions');
+  }
+}
+
+module.exports = { setupProjectRunnerGateway, revokeUserTerminalSessions };

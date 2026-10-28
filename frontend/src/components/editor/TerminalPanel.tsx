@@ -28,12 +28,14 @@ interface TerminalPanelProps {
   cwd?: string;
   projectId?: string;
   isVisible?: boolean;
+  readOnly?: boolean;
 }
 
 interface XtermViewProps {
   sessionId: string;
   isActive: boolean;
   isVisible?: boolean;
+  readOnly?: boolean;
   initSession: (sessionId: string, cols?: number, rows?: number) => void;
   sendData: (sessionId: string, data: string) => void;
   resize: (sessionId: string, cols: number, rows: number) => void;
@@ -44,6 +46,7 @@ const XtermView: React.FC<XtermViewProps> = ({
   sessionId,
   isActive,
   isVisible = true,
+  readOnly = false,
   initSession,
   sendData,
   resize,
@@ -57,8 +60,9 @@ const XtermView: React.FC<XtermViewProps> = ({
     if (!containerRef.current) return;
 
     const term = new Terminal({
-      cursorBlink: true,
-      cursorStyle: 'block',
+      cursorBlink: !readOnly,
+      disableStdin: readOnly,
+      cursorStyle: readOnly ? 'underline' : 'block',
       fontFamily: '"JetBrains Mono", Menlo, Monaco, "Courier New", monospace',
       fontSize: 13,
       lineHeight: 1.25,
@@ -98,13 +102,17 @@ const XtermView: React.FC<XtermViewProps> = ({
       fitAddon.fit();
     } catch {}
 
-    // Initialize backend PTY session
-    initSession(sessionId, term.cols, term.rows);
+    // Initialize backend PTY session only if not readOnly
+    if (!readOnly) {
+      initSession(sessionId, term.cols, term.rows);
+    } else {
+      term.write('\r\n\x1b[33m[Viewer Mode: Terminal is read-only. Terminal commands and code execution are disabled.]\x1b[0m\r\n');
+    }
 
-    // Forward user typing to backend PTY
-    const onDataDisposable = term.onData((data) => {
+    // Forward user typing to backend PTY if not readOnly
+    const onDataDisposable = !readOnly ? term.onData((data) => {
       sendData(sessionId, data);
-    });
+    }) : { dispose: () => {} };
 
     // Forward terminal resize to backend PTY
     const onResizeDisposable = term.onResize(({ cols, rows }) => {
@@ -172,6 +180,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   cwd = '/workspace',
   projectId: propProjectId,
   isVisible = true,
+  readOnly = false,
 }) => {
   const params = useParams<{ projectId: string }>();
   const projectId = propProjectId || params.projectId || '';
@@ -199,21 +208,23 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
 
   // Auto-send pending commands to active terminal
   useEffect(() => {
+    if (readOnly) return;
     if (pendingTerminalCommand && activeSessionId) {
       sendData(activeSessionId, `${pendingTerminalCommand}\r`);
       setPendingTerminalCommand(null);
     }
-  }, [pendingTerminalCommand, activeSessionId, sendData, setPendingTerminalCommand]);
+  }, [pendingTerminalCommand, activeSessionId, sendData, setPendingTerminalCommand, readOnly]);
 
   // Handle single-file run triggers
   useEffect(() => {
     if (triggerRun > 0 && codeToRun) {
+      if (readOnly) return;
       const isRecent = Date.now() - triggerRun < 2000;
       if (isRecent) {
         runCode(codeToRun, language);
       }
     }
-  }, [triggerRun, codeToRun, language, runCode]);
+  }, [triggerRun, codeToRun, language, runCode, readOnly]);
 
   const handleKill = () => {
     // Send Ctrl+C directly to active PTY
@@ -353,12 +364,18 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
               Docker Terminal Error: {connectionError}
             </div>
           )}
+          {readOnly && (
+            <div className="px-3 py-1 bg-amber-500/10 border-b border-amber-500/30 text-amber-300 text-xs flex items-center gap-1.5 shrink-0">
+              <span>Viewer access: Terminal is read-only. Code execution and interactive terminal disabled.</span>
+            </div>
+          )}
           {sessions.map((session) => (
             <XtermView
               key={`${projectId}-${session.id}`}
               sessionId={session.id}
               isActive={activeSessionId === session.id}
               isVisible={isVisible}
+              readOnly={readOnly}
               initSession={initSession}
               sendData={sendData}
               resize={resize}

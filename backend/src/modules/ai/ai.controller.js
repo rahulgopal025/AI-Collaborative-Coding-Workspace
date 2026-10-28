@@ -14,4 +14,13 @@ async function processRequest(req, res, next) {
   }
 }
 
-module.exports = { processRequest };
+async function executeCommand(req, res, next) {
+  try {
+    const result = await aiService.executeCommand(req.body, req.user.id);
+    return sendSuccess(res, result);
+  } catch (error) {
+    next(error);
+  }
+}
+
+module.exports = { processRequest, executeCommand };

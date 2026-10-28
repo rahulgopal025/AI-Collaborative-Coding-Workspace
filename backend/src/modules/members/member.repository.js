@@ -58,6 +58,20 @@ async function removeMember(userId, projectId) {
   });
 }
 
+async function findMembershipById(id, projectId) {
+  return prisma.projectMember.findFirst({
+    where: {
+      id,
+      projectId,
+    },
+    include: {
+      user: {
+        select: { id: true, name: true, email: true, avatarUrl: true },
+      },
+    },
+  });
+}
+
 /**
  * Count how many OWNERs a project has.
  */
@@ -70,6 +84,7 @@ async function countOwners(projectId) {
 module.exports = {
   findByProjectId,
   findMembership,
+  findMembershipById,
   addMember,
   updateRole,
   removeMember,

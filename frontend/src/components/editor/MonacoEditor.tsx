@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import Editor from '@monaco-editor/react';
 import { useEditorStore } from '@/store/editorStore';
 import { Loader2, Lock, Code } from 'lucide-react';
@@ -24,6 +24,8 @@ interface MonacoEditorProps {
   readOnly?: boolean;
   readOnlyReason?: string;
   yDoc?: Y.Doc | null;
+  isDocSynced?: boolean;
+  onSave?: () => void;
 }
 
 interface QuickExecutionResult {
@@ -40,6 +42,8 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
   readOnly = false,
   readOnlyReason,
   yDoc,
+  isDocSynced = false,
+  onSave,
 }) => {
   const {
     tabs,
@@ -55,7 +59,10 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
   } = useEditorStore();
 
   const [quickResult, setQuickResult] = useState<QuickExecutionResult | null>(null);
-  const editorRef = useRef<any>(null);
+
+  // Use React state for editorInstance so that setting it in onMount triggers re-renders
+  // and the binding useEffect fires correctly
+  const [editorInstance, setEditorInstance] = useState<any>(null);
   const bindingRef = useRef<MonacoBinding | null>(null);
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
@@ -64,22 +71,31 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
     setSelectedCode('');
   }, [activeTabId, setSelectedCode]);
 
+  // Yjs <-> Monaco binding lifecycle
+  // Dependencies: yDoc, isDocSynced, editorInstance, activeTab?.id
+  // Only create binding when we have all three AND the doc is synced from server
   useEffect(() => {
-    // Re-bind Yjs when yDoc or editor changes
-    if (!editorRef.current || !yDoc) {
-      if (bindingRef.current) {
-        bindingRef.current.destroy();
-        bindingRef.current = null;
-      }
+    // Destroy old binding first
+    if (bindingRef.current) {
+      bindingRef.current.destroy();
+      bindingRef.current = null;
+    }
+
+    // Don't bind until we have a synced Yjs doc AND a mounted editor
+    if (!editorInstance || !yDoc || !isDocSynced) {
       return;
     }
 
-    if (bindingRef.current) {
-      bindingRef.current.destroy();
-    }
+    const model = editorInstance.getModel();
+    if (!model) return;
 
     const type = yDoc.getText('content');
-    bindingRef.current = new MonacoBinding(type, editorRef.current.getModel(), new Set([editorRef.current]), null);
+    bindingRef.current = new MonacoBinding(
+      type,
+      model,
+      new Set([editorInstance]),
+      null // no awareness provider for now
+    );
 
     return () => {
       if (bindingRef.current) {
@@ -87,7 +103,17 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
         bindingRef.current = null;
       }
     };
-  }, [yDoc, editorRef.current, activeTab?.id]);
+  }, [yDoc, isDocSynced, editorInstance, activeTab?.id]);
+
+  // Cleanup binding when component unmounts
+  useEffect(() => {
+    return () => {
+      if (bindingRef.current) {
+        bindingRef.current.destroy();
+        bindingRef.current = null;
+      }
+    };
+  }, []);
 
   const editorOptions = {
     fontSize: editorFontSize,
@@ -153,6 +179,11 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
     );
   }
 
+  // Determine whether Monaco should be in controlled (value=) or uncontrolled mode.
+  // When Yjs is synced and the binding is managing content, we must NOT pass value=
+  // because that would conflict with the binding. Before sync, show the file content.
+  const editorValue = (yDoc && isDocSynced) ? undefined : activeTab.content;
+
   return (
     <div className={cn('relative h-full bg-editor', className)}>
       {readOnly && (
@@ -204,7 +235,8 @@ export const MonacoEditor: React.FC<MonacoEditorProps> = ({
       <Editor
         height="100%"
         language={activeTab.language}
-        value={!yDoc ? activeTab.content : undefined} // Only controlled mode when no Yjs doc
+        path={activeTab.path}
+        value={editorValue}
         onChange={handleEditorChange}
         theme="vs-dark"
         options={editorOptions}
@@ -337,11 +369,18 @@ declare global {
           });
         }}
         onMount={(editor, monaco) => {
-          editorRef.current = editor;
+          // Store in React state (not ref) so the binding useEffect triggers
+          setEditorInstance(editor);
           monaco.editor.setTheme('vscode-dark-plus');
 
+          // Ctrl+Enter → Run code
           editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
             handleRunCode();
+          });
+
+          // Ctrl+S → Force save to disk
+          editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+            onSave?.();
           });
 
           editor.onDidChangeCursorPosition((event) => {

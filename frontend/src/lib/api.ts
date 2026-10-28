@@ -43,14 +43,22 @@ export const apiRequest = async <T>(
   });
 
   const responseText = await response.text();
-  const data = responseText ? JSON.parse(responseText) : null;
+  let data: any = null;
+  try {
+    data = responseText ? JSON.parse(responseText) : null;
+  } catch {
+    data = null;
+  }
 
   if (!response.ok) {
     if (response.status === 401) {
       authTokenStore.clear();
       window.dispatchEvent(new CustomEvent('auth:401'));
     }
-    const message = data?.message || data?.error || `Request failed with status ${response.status}`;
+    const htmlSnippet = responseText?.trim().startsWith('<')
+      ? `Endpoint returned ${response.status} (${response.statusText || 'Error'})`
+      : null;
+    const message = data?.message || data?.error || htmlSnippet || (responseText && responseText.length < 300 ? responseText : `Request failed with status ${response.status}`);
     throw new Error(message);
   }
 

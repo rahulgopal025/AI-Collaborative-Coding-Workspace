@@ -34,3 +34,4 @@ EXPOSE 8080
 # Password and other settings are passed via environment variables
 ENTRYPOINT ["code-server", "--bind-addr", "0.0.0.0:8080", "--auth", "password", "/workspace"]
 
+

@@ -22,6 +22,16 @@ function registerEditorEvents(socket, io) {
       logger.error({ error: error.message, fileId }, 'Editor sync failed');
     }
   });
+
+  socket.on('editor:save', async ({ fileId }) => {
+    try {
+      if (!fileId) return;
+      await collabService.handleEditorSave(fileId, socket);
+      socket.emit('editor:saved', { fileId, timestamp: new Date().toISOString() });
+    } catch (error) {
+      logger.error({ error: error.message, fileId }, 'Editor force save failed');
+    }
+  });
 }
 
 module.exports = { registerEditorEvents };

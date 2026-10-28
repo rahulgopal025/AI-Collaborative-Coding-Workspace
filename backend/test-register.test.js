@@ -8,6 +8,7 @@ jest.mock('./src/config/database', () => ({
   prisma: {
     user: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       create: jest.fn()
     }
   }

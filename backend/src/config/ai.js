@@ -9,17 +9,18 @@ const AI_PROVIDERS = {
 };
 
 const AI_CONFIG = {
-  // Default provider to use when none is specified
-  defaultProvider: AI_PROVIDERS.GEMINI,
+  // Default provider to use when none is specified (supports AI_CONFIG or AI_PROVIDER env var)
+  defaultProvider: (process.env.AI_CONFIG || process.env.AI_PROVIDER || AI_PROVIDERS.GEMINI).toLowerCase(),
 
   gemini: {
-    model: 'gemini-2.0-flash',
+    model: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
+    fallbackModels: ['gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'],
     maxOutputTokens: 4096,
     temperature: 0.7,
   },
 
   openai: {
-    model: 'gpt-4o-mini',
+    model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
     maxTokens: 4096,
     temperature: 0.7,
   },

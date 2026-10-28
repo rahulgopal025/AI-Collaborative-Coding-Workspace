@@ -33,6 +33,15 @@ async function getMe(req, res, next) {
   }
 }
 
+async function resetPassword(req, res, next) {
+  try {
+    const result = await authService.resetPassword(req.body);
+    return sendSuccess(res, result);
+  } catch (error) {
+    next(error);
+  }
+}
+
 async function logout(req, res, next) {
   try {
     // JWT is stateless — client discards token. This endpoint exists for
@@ -43,4 +52,4 @@ async function logout(req, res, next) {
   }
 }
 
-module.exports = { register, login, getMe, logout };
+module.exports = { register, login, getMe, resetPassword, logout };

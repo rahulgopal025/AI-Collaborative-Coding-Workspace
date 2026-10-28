@@ -11,7 +11,7 @@ const logger = require('../../../common/utils/logger');
 // Map<fileId, { doc: Y.Doc, clients: Set<socketId>, saveTimer: NodeJS.Timeout | null }>
 const activeDocuments = new Map();
 
-const SAVE_DEBOUNCE_MS = 2000; // Persist 2s after last update
+const SAVE_DEBOUNCE_MS = 500; // Persist 500ms after last update for responsive HMR
 
 /**
  * Get or create an active document for a file.
@@ -81,6 +81,21 @@ function scheduleSave(fileId) {
 }
 
 /**
+ * Flush and persist document immediately.
+ */
+async function forceSave(fileId) {
+  const entry = activeDocuments.get(fileId);
+  if (!entry) return;
+
+  if (entry.saveTimer) {
+    clearTimeout(entry.saveTimer);
+    entry.saveTimer = null;
+  }
+
+  await documentPersistence.saveState(fileId, entry.doc);
+}
+
+/**
  * Get the current client count for a document.
  */
 function getClientCount(fileId) {
@@ -106,6 +121,7 @@ module.exports = {
   addClient,
   removeClient,
   scheduleSave,
+  forceSave,
   getClientCount,
   persistAll,
 };

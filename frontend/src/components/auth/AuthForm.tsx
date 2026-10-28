@@ -10,12 +10,14 @@ import { toast } from 'sonner';
 import { useNavigate, Navigate } from 'react-router-dom';
 
 const loginSchema = z.object({
-  email: z.string().email('Invalid email address'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
+  email: z.string().trim().email('Invalid email address'),
+  password: z.string().min(1, 'Password is required'),
 });
 
-const registerSchema = loginSchema.extend({
-  displayName: z.string().min(2, 'Display name must be at least 2 characters'),
+const registerSchema = z.object({
+  email: z.string().trim().email('Invalid email address'),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
+  displayName: z.string().trim().min(2, 'Display name must be at least 2 characters'),
 });
 
 interface AuthFormProps {
@@ -42,8 +44,10 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
     setErrors({});
 
     try {
+      const normalizedEmail = email.trim();
+
       if (isLogin) {
-        const result = loginSchema.safeParse({ email, password });
+        const result = loginSchema.safeParse({ email: normalizedEmail, password });
         if (!result.success) {
           const fieldErrors: Record<string, string> = {};
           result.error.errors.forEach(err => {
@@ -53,13 +57,13 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
           setLoading(false);
           return;
         }
-        const { error } = await signIn(email, password);
+        const { error } = await signIn(normalizedEmail, password);
         if (error) throw error;
         toast.success('Welcome back!');
         if (onSuccess) onSuccess();
         else navigate('/dashboard');
       } else {
-        const result = registerSchema.safeParse({ email, password, displayName });
+        const result = registerSchema.safeParse({ email: normalizedEmail, password, displayName: displayName.trim() });
         if (!result.success) {
           const fieldErrors: Record<string, string> = {};
           result.error.errors.forEach(err => {
@@ -69,7 +73,7 @@ export const AuthForm: React.FC<AuthFormProps> = ({ onSuccess }) => {
           setLoading(false);
           return;
         }
-        const { error } = await signUp(email, password, displayName);
+        const { error } = await signUp(normalizedEmail, password, displayName.trim());
         if (error) throw error;
         toast.success('Account created! You can sign in now.');
         setIsLogin(true); // Switch to login view after successful registration

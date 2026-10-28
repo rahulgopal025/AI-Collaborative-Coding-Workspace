@@ -251,7 +251,7 @@ export const useTerminalSocket = (projectId?: string) => {
         memory: number;
       }>("/execution/run", {
         method: "POST",
-        body: { language: mappedLanguage, sourceCode: code, stdin: stdin || "" },
+        body: { language: mappedLanguage, sourceCode: code, stdin: stdin || "", projectId: projectId || undefined },
       });
 
       const listener = dataListenersRef.current.get(activeSessionId);

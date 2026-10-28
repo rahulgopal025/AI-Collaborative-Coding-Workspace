@@ -41,6 +41,14 @@ router.put(
   memberController.updateRole
 );
 
+router.patch(
+  '/:userId',
+  validate(memberParamsSchema, 'params'),
+  requireProjectRole('OWNER'),
+  validate(updateMemberRoleSchema),
+  memberController.updateRole
+);
+
 router.delete(
   '/:userId',
   validate(memberParamsSchema, 'params'),

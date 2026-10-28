@@ -48,19 +48,20 @@ async function saveState(fileId, doc) {
     const state = yjsService.encodeState(doc);
     const content = yjsService.getTextContent(doc);
 
-    const updatedFile = await prisma.file.update({
+    await prisma.file.update({
       where: { id: fileId },
       data: {
         yjsState: Buffer.from(state),
         content,
       },
-      select: { id: true, name: true, projectId: true },
     });
 
     try {
-      const { syncFileToDisk } = require('../../projectRunner/fileMaterializer');
-      syncFileToDisk(updatedFile.projectId, updatedFile.name, content);
-    } catch {}
+      const { syncFileByIdToDisk } = require('../../projectRunner/fileMaterializer');
+      await syncFileByIdToDisk(fileId, content);
+    } catch (diskErr) {
+      logger.warn({ error: diskErr.message, fileId }, 'Failed to sync saved Yjs state to disk');
+    }
   } catch (error) {
     logger.error({ error: error.message, fileId }, 'Failed to save Yjs state');
   }

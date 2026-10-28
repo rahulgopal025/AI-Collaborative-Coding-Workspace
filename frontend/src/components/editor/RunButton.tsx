@@ -6,9 +6,11 @@ import { getLanguageInfo } from '@/lib/sandboxExecutor';
 
 interface RunButtonProps {
   className?: string;
+  readOnly?: boolean;
+  disabled?: boolean;
 }
 
-export const RunButton: React.FC<RunButtonProps> = ({ className }) => {
+export const RunButton: React.FC<RunButtonProps> = ({ className, readOnly, disabled: propDisabled }) => {
   const {
     tabs,
     activeTabId,
@@ -28,9 +30,10 @@ export const RunButton: React.FC<RunButtonProps> = ({ className }) => {
   if (!isRunnable) return null;
 
   const isHtml = activeTab.language.toLowerCase() === 'html' || activeTab.language.toLowerCase() === 'css';
+  const isDisabled = propDisabled || readOnly || (isTerminalRunning && !isHtml);
 
   const handleRunCode = () => {
-    if (!activeTab) return;
+    if (!activeTab || readOnly) return;
     
     if (isHtml) {
        setActiveBottomPanel('output');
@@ -49,14 +52,16 @@ export const RunButton: React.FC<RunButtonProps> = ({ className }) => {
   return (
     <button
       onClick={handleRunCode}
-      disabled={isTerminalRunning && !isHtml}
-      title={`Run ${langInfo.name}`}
+      disabled={isDisabled}
+      title={readOnly ? 'Viewer access: code execution is disabled' : `Run ${langInfo.name}`}
       className={cn(
         'flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm text-xs font-medium border transition-colors',
-        isTerminalRunning && !isHtml
-          ? 'border-[#ffb86c]/30 bg-[#ffb86c]/10 text-[#ffb86c]' 
-          : 'border-primary/50 bg-primary/90 text-primary-foreground hover:bg-primary',
-        'disabled:opacity-80 disabled:cursor-not-allowed',
+        readOnly
+          ? 'border-border/40 bg-muted/40 text-muted-foreground cursor-not-allowed opacity-60'
+          : isTerminalRunning && !isHtml
+            ? 'border-[#ffb86c]/30 bg-[#ffb86c]/10 text-[#ffb86c]' 
+            : 'border-primary/50 bg-primary/90 text-primary-foreground hover:bg-primary',
+        'disabled:cursor-not-allowed',
         className
       )}
     >

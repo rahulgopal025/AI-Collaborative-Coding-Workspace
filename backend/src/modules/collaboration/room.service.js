@@ -4,6 +4,7 @@
  */
 
 const permissionService = require('../permissions/permission.service');
+const { prisma } = require('../../config/database');
 const logger = require('../../common/utils/logger');
 
 /**
@@ -17,6 +18,15 @@ async function joinProjectRoom(socket, projectId, userId) {
     const roomName = `project:${projectId}`;
     socket.join(roomName);
     logger.debug({ socketId: socket.id, projectId }, 'Joined project room');
+
+    // Send authoritative role to joining user
+    const membership = await prisma.projectMember.findUnique({
+      where: { userId_projectId: { userId, projectId } },
+      select: { role: true },
+    });
+    if (membership) {
+      socket.emit('project:role', { projectId, role: membership.role });
+    }
 
     return true;
   } catch (error) {

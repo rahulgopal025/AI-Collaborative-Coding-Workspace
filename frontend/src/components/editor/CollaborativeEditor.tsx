@@ -16,7 +16,7 @@ import { TerminalPanel } from './TerminalPanel';
 import { AIConsole } from './AIConsole';
 import { SettingsPanel } from './SettingsPanel';
 import { ExtensionsPanel } from './ExtensionsPanel';
-import { InviteCollaboratorDialog } from '@/components/projects/InviteCollaboratorDialog';
+import { ManageCollaboratorsDialog } from '@/components/projects/ManageCollaboratorsDialog';
 import { Button } from '@/components/ui/button';
 import { useAuth } from '@/hooks/useAuth';
 import { useCollaborationSession } from '@/hooks/useCollaborationSession';
@@ -170,6 +170,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
     lastSavedAt,
     sendCodeChange,
     activeYDoc,
+    isDocSynced,
+    forceSave,
     updateCursor,
     socket,
   } = useCollaborationSession({
@@ -192,10 +194,14 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
     );
   }, [participants, setCollaborators, user?.id]);
 
-  const effectiveRole = projectRole || liveRole || (user?.id === projectOwnerId ? 'owner' : null);
+  const effectiveRole = liveRole || projectRole || (user?.id === projectOwnerId ? 'owner' : null);
+  const normalizedRole = effectiveRole ? effectiveRole.toLowerCase() : null;
+  const isProjectOwner = user?.id === projectOwnerId || normalizedRole === 'owner';
   const canEditProject =
-    user?.id === projectOwnerId || effectiveRole === 'editor' || effectiveRole === 'admin' || effectiveRole === 'owner';
-  const isProjectOwner = user?.id === projectOwnerId;
+    isProjectOwner ||
+    normalizedRole === 'editor' ||
+    normalizedRole === 'developer' ||
+    normalizedRole === 'admin';
 
   const activeLock = activeFileNode?.lock || null;
   const isActiveLockValid =
@@ -277,6 +283,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
         setActiveBottomPanel(activeBottomPanel === 'terminal' ? null : 'terminal');
       } else if (e.ctrlKey && e.key.toLowerCase() === 's') {
         e.preventDefault();
+        forceSave();
         toast.success('File saved');
       } else if (e.ctrlKey && e.key.toLowerCase() === 'w') {
         e.preventDefault();
@@ -473,7 +480,10 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
               onImportComplete={() => void refetch(true)}
             />
           )}
-          {isProjectOwner && <InviteCollaboratorDialog projectId={projectId} />}
+          <ManageCollaboratorsDialog
+            projectId={projectId}
+            projectOwnerId={projectOwnerId}
+          />
           <div
             className="hidden h-7 w-7 items-center justify-center rounded-sm text-[10px] font-medium text-white sm:flex"
             style={{ backgroundColor: `hsl(var(--user-${profile?.color || 1}))` }}
@@ -548,13 +558,15 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
                 {activeTab ? (
                   (htmlPreviewLayout === 'editor' || htmlPreviewLayout === 'split' || !isHtmlFile) && (
                     <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-                      <EditorTabs />
+                      <EditorTabs readOnly={isReadOnly} />
                       <MonacoEditor
                         className="flex-1"
                         onContentChange={handleContentChange}
                         readOnly={isReadOnly}
                         readOnlyReason={readOnlyReason}
                         yDoc={activeYDoc}
+                        isDocSynced={isDocSynced}
+                        onSave={forceSave}
                         onCursorChange={(line, column) => {
                           setCursorLine(line);
                           setCursorColumn(column);
@@ -685,6 +697,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
                           filePath={activeTab?.path}
                           fileName={activeTab?.name}
                           isVisible={activeBottomPanel === 'terminal'}
+                          readOnly={isReadOnly}
                         />
                       </div>
                       <div className={cn('h-full w-full', activeBottomPanel !== 'ai' && 'hidden')}>

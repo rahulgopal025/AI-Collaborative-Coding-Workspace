@@ -29,6 +29,10 @@ const io = new Server(server, {
   },
 });
 
+const { setIO } = require("./config/socket");
+setIO(io);
+app.set("io", io);
+
 const collabGateway = setupCollaborationGateway(io);
 const runnerGateway = setupProjectRunnerGateway(io);
 

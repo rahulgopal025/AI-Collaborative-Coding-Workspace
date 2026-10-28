@@ -16,10 +16,12 @@ async function getLanguages(req, res, next) {
 
 async function run(req, res, next) {
   try {
-    const { language, sourceCode, stdin } = req.body;
+    const { language, sourceCode, stdin, projectId } = req.body;
     
-    // In the future, we could log the execution associated with the user/project here
-    // e.g. await activityService.log(...)
+    if (projectId) {
+      const permissionService = require('../permissions/permission.service');
+      await permissionService.can(req.user.id, projectId, 'EXECUTE_CODE');
+    }
 
     const result = await executionService.runCode({ language, sourceCode, stdin });
     

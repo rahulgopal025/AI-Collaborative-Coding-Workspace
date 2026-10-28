@@ -219,6 +219,90 @@ function getProjectDir(projectId) {
 const recentlyWrittenToDisk = new Map();
 
 /**
+ * Resolve the relative path of a file inside its project directory.
+ * E.g., folder 'src' -> folder 'components' -> file 'Hero.jsx' => 'src/components/Hero.jsx'
+ *
+ * @param {string} fileId
+ * @returns {Promise<{ projectId: string, relativePath: string, fileName: string } | null>}
+ */
+async function resolveFileRelativePath(fileId) {
+  try {
+    const file = await prisma.file.findUnique({
+      where: { id: fileId },
+      select: { id: true, name: true, folderId: true, projectId: true },
+    });
+    if (!file) return null;
+
+    if (!file.folderId) {
+      return { projectId: file.projectId, relativePath: file.name, fileName: file.name };
+    }
+
+    // Traverse folders upward
+    const folders = await prisma.folder.findMany({
+      where: { projectId: file.projectId },
+      select: { id: true, name: true, parentId: true },
+    });
+
+    const folderMap = new Map(folders.map((f) => [f.id, f]));
+    const segments = [file.name];
+    let curId = file.folderId;
+    while (curId) {
+      const folder = folderMap.get(curId);
+      if (!folder) break;
+      segments.unshift(folder.name);
+      curId = folder.parentId;
+    }
+
+    return {
+      projectId: file.projectId,
+      relativePath: segments.join('/'),
+      fileName: file.name,
+    };
+  } catch (err) {
+    logger.warn({ fileId, error: err.message }, 'Failed to resolve file relative path');
+    return null;
+  }
+}
+
+/**
+ * Synchronize a file by its database ID to the runtime disk directory.
+ * Resolves the full folder hierarchy automatically.
+ *
+ * @param {string} fileId
+ * @param {string} content
+ */
+async function syncFileByIdToDisk(fileId, content) {
+  try {
+    const resolved = await resolveFileRelativePath(fileId);
+    if (!resolved) return;
+    syncFileToDisk(resolved.projectId, resolved.relativePath, content);
+  } catch (err) {
+    logger.warn({ fileId, error: err.message }, 'Failed to sync file by ID to disk');
+  }
+}
+
+/**
+ * Delete a file from the runtime disk directory using its database ID.
+ *
+ * @param {string} fileId
+ * @param {string} projectId
+ */
+async function deleteFileByIdFromDisk(fileId, projectId) {
+  try {
+    const resolved = await resolveFileRelativePath(fileId);
+    if (!resolved) return;
+    const projectDir = getProjectDir(resolved.projectId || projectId);
+    const fullPath = path.join(projectDir, resolved.relativePath);
+    if (fs.existsSync(fullPath)) {
+      fs.unlinkSync(fullPath);
+      logger.debug({ fullPath }, 'Deleted file from runtime disk');
+    }
+  } catch (err) {
+    logger.warn({ fileId, error: err.message }, 'Failed to delete file from runtime disk');
+  }
+}
+
+/**
  * Synchronize a file saved in the editor/database to the runtime disk directory.
  *
  * @param {string} projectId
@@ -441,7 +525,10 @@ module.exports = {
   snapshotFileList,
   cleanup,
   getProjectDir,
+  resolveFileRelativePath,
   syncFileToDisk,
+  syncFileByIdToDisk,
+  deleteFileByIdFromDisk,
   startWatcher,
   stopWatcher,
 };

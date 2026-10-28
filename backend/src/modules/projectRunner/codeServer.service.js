@@ -493,6 +493,9 @@ async function startContainer(projectId, projectDir, socketId) {
         'NODE_ENV=development',
         'NPM_CONFIG_UPDATE_NOTIFIER=false',
         'NPM_CONFIG_FUND=false',
+        'CHOKIDAR_USEPOLLING=true',
+        'CHOKIDAR_INTERVAL=100',
+        'WATCHPACK_POLLING=true',
       ],
       WorkingDir: '/workspace',
       HostConfig: {

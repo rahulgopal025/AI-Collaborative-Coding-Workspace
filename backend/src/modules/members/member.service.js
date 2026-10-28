@@ -68,9 +68,22 @@ async function addMember(projectId, data, addedByUserId) {
 }
 
 async function updateMemberRole(projectId, targetUserId, newRole, updatedByUserId) {
-  const membership = await memberRepository.findMembership(targetUserId, projectId);
+  let membership = await memberRepository.findMembership(targetUserId, projectId);
+  if (!membership) {
+    membership = await memberRepository.findMembershipById(targetUserId, projectId);
+  }
   if (!membership) {
     throw AppError.notFound('Member not found', ERROR_CODES.MEMBER_NOT_FOUND);
+  }
+
+  const actualUserId = membership.userId;
+
+  // Prevent users from changing their own role through this action
+  if (actualUserId === updatedByUserId) {
+    throw AppError.badRequest(
+      'Cannot change your own role through this action',
+      ERROR_CODES.INSUFFICIENT_PERMISSIONS
+    );
   }
 
   // Prevent demoting the last OWNER
@@ -84,23 +97,57 @@ async function updateMemberRole(projectId, targetUserId, newRole, updatedByUserI
     }
   }
 
-  const updated = await memberRepository.updateRole(targetUserId, projectId, newRole);
+  const updated = await memberRepository.updateRole(actualUserId, projectId, newRole);
 
   await activityService.log({
     projectId,
     userId: updatedByUserId,
     action: 'MEMBER_ROLE_CHANGED',
-    metadata: { targetUser: targetUserId, oldRole: membership.role, newRole },
+    metadata: { targetUser: actualUserId, oldRole: membership.role, newRole },
   });
+
+  // Emit authorized project-scoped role-change event via Socket.IO
+  try {
+    const { getIO } = require('../../config/socket');
+    const io = getIO();
+    if (io) {
+      io.to(`project:${projectId}`).emit('project:member_role_changed', {
+        projectId,
+        userId: actualUserId,
+        memberId: updated.id,
+        role: newRole,
+      });
+      io.to(`project:${projectId}`).emit('member:role_updated', {
+        projectId,
+        userId: actualUserId,
+        memberId: updated.id,
+        role: newRole,
+      });
+    }
+
+    if (newRole === 'VIEWER') {
+      const runnerGateway = require('../projectRunner/projectRunner.gateway');
+      if (typeof runnerGateway.revokeUserTerminalSessions === 'function') {
+        runnerGateway.revokeUserTerminalSessions(projectId, actualUserId);
+      }
+    }
+  } catch (err) {
+    // Non-fatal if socket emission fails (e.g. In unit tests)
+  }
 
   return updated;
 }
 
 async function removeMember(projectId, targetUserId, removedByUserId) {
-  const membership = await memberRepository.findMembership(targetUserId, projectId);
+  let membership = await memberRepository.findMembership(targetUserId, projectId);
+  if (!membership) {
+    membership = await memberRepository.findMembershipById(targetUserId, projectId);
+  }
   if (!membership) {
     throw AppError.notFound('Member not found', ERROR_CODES.MEMBER_NOT_FOUND);
   }
+
+  const actualUserId = membership.userId;
 
   // Prevent removing the last OWNER
   if (membership.role === 'OWNER') {
@@ -113,22 +160,37 @@ async function removeMember(projectId, targetUserId, removedByUserId) {
     }
   }
 
-  await memberRepository.removeMember(targetUserId, projectId);
+  await memberRepository.removeMember(actualUserId, projectId);
 
   await activityService.log({
     projectId,
     userId: removedByUserId,
     action: 'MEMBER_REMOVED',
-    metadata: { removedUser: targetUserId },
+    metadata: { removedUser: actualUserId },
   });
 
   // Notify the removed user
   await notificationService.notify({
-    userId: targetUserId,
+    userId: actualUserId,
     projectId,
     type: 'MEMBER_REMOVED',
     message: 'You have been removed from a project.',
   });
+
+  try {
+    const { getIO } = require('../../config/socket');
+    const io = getIO();
+    if (io) {
+      io.to(`project:${projectId}`).emit('project:member_removed', {
+        projectId,
+        userId: actualUserId,
+      });
+    }
+    const runnerGateway = require('../projectRunner/projectRunner.gateway');
+    if (typeof runnerGateway.revokeUserTerminalSessions === 'function') {
+      runnerGateway.revokeUserTerminalSessions(projectId, actualUserId);
+    }
+  } catch (err) {}
 }
 
 module.exports = { getProjectMembers, addMember, updateMemberRole, removeMember };

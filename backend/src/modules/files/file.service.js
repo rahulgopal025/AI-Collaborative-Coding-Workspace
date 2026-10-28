@@ -22,6 +22,11 @@ async function createFile(projectId, data, userId) {
 
   const file = await fileRepository.createFile({ ...data, projectId });
 
+  try {
+    const { syncFileByIdToDisk } = require('../projectRunner/fileMaterializer');
+    await syncFileByIdToDisk(file.id, file.content || '');
+  } catch {}
+
   await activityService.log({
     projectId,
     userId,
@@ -63,11 +68,13 @@ async function updateFile(fileId, data, userId) {
   const updated = await fileRepository.updateFile(fileId, data);
 
   try {
-    const { syncFileToDisk } = require('../projectRunner/fileMaterializer');
+    const { syncFileByIdToDisk } = require('../projectRunner/fileMaterializer');
     if (data.content !== undefined) {
-      syncFileToDisk(file.projectId, file.name, data.content);
+      await syncFileByIdToDisk(fileId, data.content);
     }
-  } catch {}
+  } catch (err) {
+    logger.warn({ fileId, error: err.message }, 'Failed to sync updated file to disk');
+  }
 
   await activityService.log({
     projectId: file.projectId,
@@ -86,6 +93,11 @@ async function deleteFile(fileId, userId) {
   }
 
   await permissionService.can(userId, file.projectId, 'FILE_DELETE');
+
+  try {
+    const { deleteFileByIdFromDisk } = require('../projectRunner/fileMaterializer');
+    await deleteFileByIdFromDisk(fileId, file.projectId);
+  } catch {}
 
   await fileRepository.deleteFile(fileId);
 
