@@ -14,6 +14,7 @@ import { SearchPanel } from './SearchPanel';
 import { StatusBar } from './StatusBar';
 import { TerminalPanel } from './TerminalPanel';
 import { AIConsole } from './AIConsole';
+import { CodeRunnerPanel } from './CodeRunnerPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { ExtensionsPanel } from './ExtensionsPanel';
 import { ManageCollaboratorsDialog } from '@/components/projects/ManageCollaboratorsDialog';
@@ -652,7 +653,18 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
                           backgroundColor: activeBottomPanel === 'terminal' ? 'rgba(255,184,108,0.07)' : 'transparent',
                         }}
                       >
-                        Terminal
+                        Docker Terminal
+                      </button>
+                      <button
+                        onClick={() => setActiveBottomPanel('runner')}
+                        className="px-4 py-1.5 text-[11px] font-medium tracking-wide uppercase transition-colors border-t-2"
+                        style={{
+                          borderTopColor: activeBottomPanel === 'runner' ? '#50fa7b' : 'transparent',
+                          color: activeBottomPanel === 'runner' ? '#50fa7b' : '#6272a4',
+                          backgroundColor: activeBottomPanel === 'runner' ? 'rgba(80,250,123,0.07)' : 'transparent',
+                        }}
+                      >
+                        Code Runner
                       </button>
                       <button
                         onClick={() => setActiveBottomPanel('ai')}
@@ -698,6 +710,20 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = (props) =
                           fileName={activeTab?.name}
                           isVisible={activeBottomPanel === 'terminal'}
                           readOnly={isReadOnly}
+                          onSwitchToCodeRunner={() => setActiveBottomPanel('runner')}
+                        />
+                      </div>
+                      <div className={cn('h-full w-full', activeBottomPanel !== 'runner' && 'hidden')}>
+                        <CodeRunnerPanel
+                          className="h-full"
+                          projectId={projectId}
+                          codeToRun={currentCode}
+                          language={currentLanguage}
+                          fileName={activeTab?.name}
+                          isVisible={activeBottomPanel === 'runner'}
+                          readOnly={isReadOnly}
+                          onClose={() => setActiveBottomPanel(null)}
+                          onSwitchToDockerTerminal={() => setActiveBottomPanel('terminal')}
                         />
                       </div>
                       <div className={cn('h-full w-full', activeBottomPanel !== 'ai' && 'hidden')}>

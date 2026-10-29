@@ -3,28 +3,42 @@
  */
 
 const SUPPORTED_LANGUAGES = {
-  java: { id: "java", extension: "java" },
-  c: { id: "c", extension: "c" },
-  cpp: { id: "cpp", extension: "cpp" },
-  python3: { id: "python3", extension: "py" },
-  javascript: { id: "javascript", extension: "js" },
-  typescript: { id: "typescript", extension: "ts" },
-  go: { id: "go", extension: "go" },
-  rust: { id: "rust", extension: "rs" },
-  php: { id: "php", extension: "php" },
-  ruby: { id: "ruby", extension: "rb" },
-  swift: { id: "swift", extension: "swift" },
-  csharp: { id: "csharp", extension: "cs" },
+  java: { id: "java", name: "Java", extension: "java" },
+  c: { id: "c", name: "C", extension: "c" },
+  cpp: { id: "cpp", name: "C++", extension: "cpp" },
+  python3: { id: "python3", name: "Python", extension: "py" },
+  javascript: { id: "javascript", name: "JavaScript", extension: "js" },
+  typescript: { id: "typescript", name: "TypeScript", extension: "ts" },
+  go: { id: "go", name: "Go", extension: "go" },
+  rust: { id: "rust", name: "Rust", extension: "rs" },
+  php: { id: "php", name: "PHP", extension: "php" },
+  ruby: { id: "ruby", name: "Ruby", extension: "rb" },
+  swift: { id: "swift", name: "Swift", extension: "swift" },
+  csharp: { id: "csharp", name: "C#", extension: "cs" },
 };
+
+function normalizeLanguage(lang) {
+  if (!lang || typeof lang !== 'string') return null;
+  const l = lang.trim().toLowerCase();
+  if (l === 'python' || l === 'py') return 'python3';
+  if (l === 'c++') return 'cpp';
+  if (l === 'c#') return 'csharp';
+  if (l === 'js' || l === 'mjs') return 'javascript';
+  if (l === 'ts') return 'typescript';
+  if (SUPPORTED_LANGUAGES[l]) return l;
+  return null;
+}
 
 function getSupportedLanguages() {
   return Object.values(SUPPORTED_LANGUAGES).map(lang => ({
     id: lang.id,
-    name: lang.id.charAt(0).toUpperCase() + lang.id.slice(1)
+    name: lang.name || (lang.id.charAt(0).toUpperCase() + lang.id.slice(1)),
+    extension: lang.extension,
   }));
 }
 
 function getLanguageByExtension(extension) {
+  if (!extension) return null;
   const ext = extension.replace(".", "").toLowerCase();
   
   // Custom mappings for common variations
@@ -37,5 +51,9 @@ function getLanguageByExtension(extension) {
   return found ? found.id : null;
 }
 
-module.exports = { SUPPORTED_LANGUAGES, getSupportedLanguages, getLanguageByExtension };
-
+module.exports = {
+  SUPPORTED_LANGUAGES,
+  getSupportedLanguages,
+  getLanguageByExtension,
+  normalizeLanguage
+};

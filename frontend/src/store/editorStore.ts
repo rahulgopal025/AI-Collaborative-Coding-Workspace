@@ -381,7 +381,7 @@ interface EditorState {
   rightPanelWidth: number;
   bottomPanelHeight: number;
   activeRightPanel: 'chat' | 'ai' | null;
-  activeBottomPanel: 'terminal' | 'output' | 'ai' | 'preview' | null;
+  activeBottomPanel: 'terminal' | 'runner' | 'output' | 'ai' | 'preview' | null;
   activeActivityBar: 'files' | 'search' | 'git' | 'extensions' | 'settings' | null;
   pendingTerminalCommand: string | null;
   
@@ -407,7 +407,7 @@ interface EditorState {
   setRightPanelWidth: (width: number) => void;
   setBottomPanelHeight: (height: number) => void;
   setActiveRightPanel: (panel: 'chat' | 'ai' | null) => void;
-  setActiveBottomPanel: (panel: 'terminal' | 'output' | 'ai' | null) => void;
+  setActiveBottomPanel: (panel: 'terminal' | 'runner' | 'output' | 'ai' | 'preview' | null) => void;
   setPendingTerminalCommand: (cmd: string | null) => void;
   setActiveActivityBar: (activity: 'files' | 'search' | 'git' | 'extensions' | 'settings' | null) => void;
   setHtmlPreviewLayout: (layout: 'editor' | 'split' | 'preview') => void;
@@ -425,6 +425,8 @@ interface EditorState {
   setCollaborators: (collaborators: User[]) => void;
   triggerRun: number;
   setTriggerRun: (timestamp: number) => void;
+  triggerRunnerRun: number;
+  setTriggerRunnerRun: (timestamp: number) => void;
   isTerminalRunning: boolean;
   setIsTerminalRunning: (isRunning: boolean) => void;
   hasNodeModules: boolean;
@@ -621,6 +623,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   pendingTerminalCommand: null,
   installedExtensions: ['vscode-icons'],
   triggerRun: 0,
+  triggerRunnerRun: 0,
   isTerminalRunning: false,
   hasNodeModules: false,
   htmlPreviewLayout: 'editor',
@@ -629,6 +632,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   getAllFiles: () => flattenFilesWithParents(get().files),
   setHtmlPreviewLayout: (layout) => set({ htmlPreviewLayout: layout }),
   setTriggerRun: (timestamp) => set({ triggerRun: timestamp }),
+  setTriggerRunnerRun: (timestamp) => set({ triggerRunnerRun: timestamp }),
   setIsTerminalRunning: (isRunning) => set({ isTerminalRunning: isRunning }),
   setHasNodeModules: (has) => set({ hasNodeModules: has }),
   openFile: (fileId: string) => {

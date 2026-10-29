@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
-import { X, Circle, ChevronLeft, ChevronRight, Terminal, Code, Columns, Globe } from 'lucide-react';
+import { X, Circle, ChevronLeft, ChevronRight, Terminal, Code, Columns, Globe, Code2 } from 'lucide-react';
 import { useEditorStore } from '@/store/editorStore';
 import { cn } from '@/lib/utils';
 import { RunButton } from './RunButton';
@@ -168,11 +168,22 @@ export const EditorTabs: React.FC<EditorTabsProps> = ({ className, readOnly }) =
           )}
 
           <button
-            onClick={() => setActiveBottomPanel('terminal')}
-            title={readOnly ? "Terminal (Read-only for Viewers)" : "Open Terminal"}
+            onClick={() => setActiveBottomPanel(activeBottomPanel === 'runner' ? null : 'runner')}
+            title="Code Runner (Run C, C++, Java, Python)"
             className={cn(
               'flex items-center justify-center w-7 h-7 rounded-sm border border-border text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors',
-              activeBottomPanel === 'terminal' && 'ring-1 ring-primary text-primary'
+              activeBottomPanel === 'runner' && 'ring-1 ring-[#50fa7b] text-[#50fa7b]'
+            )}
+          >
+            <Code2 className="w-3.5 h-3.5 text-[#50fa7b]" />
+          </button>
+
+          <button
+            onClick={() => setActiveBottomPanel(activeBottomPanel === 'terminal' ? null : 'terminal')}
+            title={readOnly ? "Docker Terminal (Read-only for Viewers)" : "Docker Terminal"}
+            className={cn(
+              'flex items-center justify-center w-7 h-7 rounded-sm border border-border text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors',
+              activeBottomPanel === 'terminal' && 'ring-1 ring-[#ffb86c] text-[#ffb86c]'
             )}
           >
             <Terminal className="w-3.5 h-3.5" />

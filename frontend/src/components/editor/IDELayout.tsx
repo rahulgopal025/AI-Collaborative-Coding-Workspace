@@ -8,6 +8,7 @@ import { MonacoEditor } from './MonacoEditor';
 import { ChatPanel } from './ChatPanel';
 import { AIAssistant } from './AIAssistant';
 import { TerminalPanel } from './TerminalPanel';
+import { CodeRunnerPanel } from './CodeRunnerPanel';
 import { HTMLPreview } from './HTMLPreview';
 import { BottomPanel } from './BottomPanel';
 import { StatusBar } from './StatusBar';
@@ -117,6 +118,16 @@ export const IDELayout: React.FC = () => {
                   language={currentLanguage}
                   filePath={activeTab?.path}
                   fileName={activeTab?.name}
+                  onSwitchToCodeRunner={() => setActiveBottomPanel('runner')}
+                />
+              ) : activeBottomPanel === 'runner' ? (
+                <CodeRunnerPanel
+                  className="h-full"
+                  onClose={() => setActiveBottomPanel(null)}
+                  codeToRun={currentCode}
+                  language={currentLanguage}
+                  fileName={activeTab?.name}
+                  onSwitchToDockerTerminal={() => setActiveBottomPanel('terminal')}
                 />
               ) : null}
             </BottomPanel>

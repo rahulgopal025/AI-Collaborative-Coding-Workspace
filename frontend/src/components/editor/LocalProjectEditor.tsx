@@ -10,6 +10,7 @@ import { MonacoEditor } from './MonacoEditor';
 import { SearchPanel } from './SearchPanel';
 import { StatusBar } from './StatusBar';
 import { TerminalPanel } from './TerminalPanel';
+import { CodeRunnerPanel } from './CodeRunnerPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { ExtensionsPanel } from './ExtensionsPanel';
 import { Button } from '@/components/ui/button';
@@ -407,15 +408,27 @@ export const LocalProjectEditor = () => {
 
           {activeBottomPanel && (
             <BottomPanel height={bottomPanelHeight} onResize={setBottomPanelHeight}>
-              <TerminalPanel
-                className="h-full"
-                onClose={() => setActiveBottomPanel(null)}
-                codeToRun={currentCode}
-                language={currentLanguage}
-                filePath={activeTab?.path}
-                fileName={activeTab?.name}
-                cwd={displayCwd}
-              />
+              {activeBottomPanel === 'terminal' ? (
+                <TerminalPanel
+                  className="h-full"
+                  onClose={() => setActiveBottomPanel(null)}
+                  codeToRun={currentCode}
+                  language={currentLanguage}
+                  filePath={activeTab?.path}
+                  fileName={activeTab?.name}
+                  cwd={displayCwd}
+                  onSwitchToCodeRunner={() => setActiveBottomPanel('runner')}
+                />
+              ) : activeBottomPanel === 'runner' ? (
+                <CodeRunnerPanel
+                  className="h-full"
+                  onClose={() => setActiveBottomPanel(null)}
+                  codeToRun={currentCode}
+                  language={currentLanguage}
+                  fileName={activeTab?.name}
+                  onSwitchToDockerTerminal={() => setActiveBottomPanel('terminal')}
+                />
+              ) : null}
             </BottomPanel>
           )}
         </div>

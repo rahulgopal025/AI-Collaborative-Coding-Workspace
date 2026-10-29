@@ -14,8 +14,10 @@ export const RunButton: React.FC<RunButtonProps> = ({ className, readOnly, disab
   const {
     tabs,
     activeTabId,
+    activeBottomPanel,
     setActiveBottomPanel,
     setTriggerRun,
+    setTriggerRunnerRun,
     isTerminalRunning
   } = useEditorStore();
 
@@ -40,6 +42,11 @@ export const RunButton: React.FC<RunButtonProps> = ({ className, readOnly, disab
        return;
     }
 
+    if (activeBottomPanel === 'runner') {
+      setTriggerRunnerRun(Date.now());
+      return;
+    }
+
     if (isTerminalRunning) return;
 
     // Switch to Terminal automatically
@@ -53,13 +60,21 @@ export const RunButton: React.FC<RunButtonProps> = ({ className, readOnly, disab
     <button
       onClick={handleRunCode}
       disabled={isDisabled}
-      title={readOnly ? 'Viewer access: code execution is disabled' : `Run ${langInfo.name}`}
+      title={
+        readOnly
+          ? 'Viewer access: code execution is disabled'
+          : activeBottomPanel === 'runner'
+          ? `Run ${langInfo.name} in Code Runner`
+          : `Run ${langInfo.name}`
+      }
       className={cn(
         'flex items-center gap-1.5 px-2.5 py-1.5 rounded-sm text-xs font-medium border transition-colors',
         readOnly
           ? 'border-border/40 bg-muted/40 text-muted-foreground cursor-not-allowed opacity-60'
           : isTerminalRunning && !isHtml
             ? 'border-[#ffb86c]/30 bg-[#ffb86c]/10 text-[#ffb86c]' 
+            : activeBottomPanel === 'runner'
+            ? 'border-[#50fa7b]/50 bg-[#50fa7b]/20 text-[#50fa7b] hover:bg-[#50fa7b]/30'
             : 'border-primary/50 bg-primary/90 text-primary-foreground hover:bg-primary',
         'disabled:cursor-not-allowed',
         className

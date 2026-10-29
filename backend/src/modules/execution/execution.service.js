@@ -3,7 +3,7 @@
  */
 
 const paizaClient = require('./paiza.client');
-const { getSupportedLanguages, SUPPORTED_LANGUAGES } = require('./execution.languages');
+const { getSupportedLanguages, normalizeLanguage } = require('./execution.languages');
 const AppError = require('../../common/errors/AppError');
 const ERROR_CODES = require('../../common/errors/errorCodes');
 
@@ -12,13 +12,14 @@ const POLLING_INTERVAL_MS = 1000;
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function runCode({ language, sourceCode, stdin }) {
-  if (!SUPPORTED_LANGUAGES[language]) {
+async function runCode({ language, sourceCode, stdin = '' }) {
+  const normalizedLang = normalizeLanguage(language);
+  if (!normalizedLang) {
     throw AppError.badRequest(`Unsupported language: ${language}`, ERROR_CODES.VALIDATION_ERROR);
   }
 
   // 1. Create runner session
-  const createResult = await paizaClient.createRunner(language, sourceCode, stdin);
+  const createResult = await paizaClient.createRunner(normalizedLang, sourceCode, stdin);
   const runnerId = createResult.id;
 
   if (!runnerId) {
@@ -45,6 +46,7 @@ async function runCode({ language, sourceCode, stdin }) {
   // 3. Normalize result
   return {
     id: runnerId,
+    language: normalizedLang,
     status: details.status, // "completed"
     result: details.result, // "success", "failure", "timeout"
     stdout: details.stdout || '',

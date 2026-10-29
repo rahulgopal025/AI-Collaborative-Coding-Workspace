@@ -9,6 +9,7 @@ import {
   StopCircle,
   Terminal as TerminalIcon,
   Circle,
+  Code2,
 } from 'lucide-react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -29,6 +30,7 @@ interface TerminalPanelProps {
   projectId?: string;
   isVisible?: boolean;
   readOnly?: boolean;
+  onSwitchToCodeRunner?: () => void;
 }
 
 interface XtermViewProps {
@@ -47,6 +49,7 @@ const XtermView: React.FC<XtermViewProps> = ({
   isActive,
   isVisible = true,
   readOnly = false,
+  onSwitchToCodeRunner,
   initSession,
   sendData,
   resize,
@@ -181,6 +184,7 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
   projectId: propProjectId,
   isVisible = true,
   readOnly = false,
+  onSwitchToCodeRunner,
 }) => {
   const params = useParams<{ projectId: string }>();
   const projectId = propProjectId || params.projectId || '';
@@ -249,8 +253,25 @@ export const TerminalPanel: React.FC<TerminalPanelProps> = ({
         <div className="flex items-center gap-1 min-w-0">
           <div className="flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold text-[#ffb86c] shrink-0">
             <TerminalIcon className="w-3.5 h-3.5" />
-            <span>TERMINAL</span>
+            <span>Docker Terminal</span>
           </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (onSwitchToCodeRunner) {
+                onSwitchToCodeRunner();
+              } else {
+                useEditorStore.getState().setActiveBottomPanel('runner');
+              }
+            }}
+            className="flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-medium rounded-sm transition-colors text-[#6272a4] hover:bg-white/5 hover:text-[#50fa7b]"
+            title="Switch to Code Runner (Single-File Execution)"
+          >
+            <Code2 className="w-3.5 h-3.5 text-[#50fa7b]" />
+            <span>Code Runner</span>
+          </button>
+
 
           {/* Docker status pill */}
           <div

@@ -8,6 +8,7 @@ export { MonacoEditor } from './MonacoEditor';
 export { ChatPanel } from './ChatPanel';
 export { AIAssistant } from './AIAssistant';
 export { TerminalPanel } from './TerminalPanel';
+export { CodeRunnerPanel } from './CodeRunnerPanel';
 export { StatusBar } from './StatusBar';
 export { SettingsPanel } from './SettingsPanel';
 export { LocalProjectEditor } from './LocalProjectEditor';

@@ -18,7 +18,7 @@ async function run(req, res, next) {
   try {
     const { language, sourceCode, stdin, projectId } = req.body;
     
-    if (projectId) {
+    if (projectId && typeof projectId === 'string' && projectId.trim() !== '' && projectId !== 'local') {
       const permissionService = require('../permissions/permission.service');
       await permissionService.can(req.user.id, projectId, 'EXECUTE_CODE');
     }
